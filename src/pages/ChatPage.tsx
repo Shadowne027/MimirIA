@@ -284,7 +284,6 @@ export default function ChatPage() {
                   <div className="max-w-[120px] truncate text-sm font-semibold">{user?.username}</div>
                   <div className="font-mono text-[10px] text-[var(--amber)]">
                     Estudiante {user?.id}
-                    {user?.demo ? " · demo" : ""}
                   </div>
                 </div>
               </div>
@@ -358,7 +357,7 @@ export default function ChatPage() {
                     ? "Verificando conexión…"
                     : apiOnline
                     ? "API conectada · GPT-5-mini + MongoDB"
-                    : "Modo demo · historial local"}
+                    : "Sin API conectada · historial en este dispositivo"}
                 </span>
               </div>
             </div>
@@ -510,7 +509,7 @@ export default function ChatPage() {
             </form>
             <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
               MIMIR puede cometer errores: verifica siempre las fuentes citadas.
-              {user?.demo && " Estás en modo demo (sin backend): conecta MongoDB y OpenAI en Vercel para respuestas reales."}
+              {user?.demo && " Estás viendo respuestas simuladas: conecta MongoDB y OpenAI en Vercel para respuestas reales de la IA."}
             </p>
           </div>
         </main>
