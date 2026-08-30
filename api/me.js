@@ -1,0 +1,15 @@
+import { authUser, send, displayId } from "./_lib.js";
+
+/** GET /api/me — valida el token y devuelve el usuario actual. */
+export default async function handler(req, res) {
+  if (req.method !== "GET") return send(res, 405, { error: "Método no permitido" });
+  try {
+    const user = await authUser(req);
+    if (!user) return send(res, 401, { error: "Sesión inválida. Inicia sesión de nuevo." });
+    return send(res, 200, {
+      user: { userId: user.userId, id: displayId(user.userId), username: user.username },
+    });
+  } catch (e) {
+    return send(res, 500, { error: "Error interno del servidor." });
+  }
+}

@@ -15,11 +15,11 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "default", size = "default", ...props }, ref) => {
     const base =
-      "inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#065F46] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0";
+      "inline-flex items-center justify-center whitespace-nowrap text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0";
     const variants: Record<string, string> = {
-      default: "bg-[#065F46] text-white hover:bg-[#047857]",
-      ghost: "hover:bg-[#F4F2EB]",
-      outline: "border border-[#E2E8F0] bg-transparent hover:bg-[#F4F2EB]",
+      default: "bg-[var(--brand)] text-white hover:bg-[var(--brand-hover)]",
+      ghost: "hover:bg-[var(--bg-soft)]",
+      outline: "border border-[var(--border)] bg-transparent hover:bg-[var(--bg-soft)]",
     };
     const sizes: Record<string, string> = {
       default: "h-10 px-4 py-2",
@@ -39,7 +39,7 @@ export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttribute
     <input
       ref={ref}
       className={cn(
-        "flex w-full rounded-md border border-[#E2E8F0] bg-white px-3 py-2 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent placeholder:text-[#94A3B8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#065F46]/30 focus-visible:border-[#065F46] disabled:cursor-not-allowed disabled:opacity-50",
+        "flex w-full rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm text-[var(--text)] shadow-sm transition-colors file:border-0 file:bg-transparent placeholder:text-[var(--text-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/30 focus-visible:border-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-50",
         className
       )}
       {...props}
