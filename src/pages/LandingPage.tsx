@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Sparkles, BookOpen, Compass, Brain, Clock, Globe, ArrowRight,
@@ -9,7 +9,6 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Button, Input, Badge, Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "../components/ui";
 import { Toaster } from "sonner";
-import useEmblaCarousel from "embla-carousel-react";
 import { useAuth } from "../contexts/AuthContext";
 import { AuthModal } from "../components/AuthModal";
 import { HERO_BG, SCHOOL_IMG, TECH_IMG, YGG_LOGO, IMG_GRADUACION, IMG_IE_REAL, IMG_AUTODIDACTA, IMG_ESFUERZATE } from "../lib/assets";
@@ -429,63 +428,98 @@ function HowItWorks() {
 }
 
 // ====== TARGET AUDIENCE — CAROUSEL (cíclico, 10s, con reinicio de contador) ======
+const AUDIENCE_CARDS: { icon: LucideIcon; title: string; desc: string; img: string; testid: string }[] = [
+  {
+    icon: School,
+    title: "Estudiantes de básica",
+    desc: "Explicaciones simples, ejemplos cotidianos y refuerzo de fundamentos. Aprende a tu ritmo, con paciencia.",
+    img: IMG_GRADUACION,
+    testid: "audience-basica",
+  },
+  {
+    icon: GraduationCap,
+    title: "Estudiantes de media",
+    desc: "Preparación para ICFES, ensayos, matemáticas avanzadas y ciencias. Tu próximo grado, con respaldo real.",
+    img: IMG_IE_REAL,
+    testid: "audience-media",
+  },
+  {
+    icon: BookOpen,
+    title: "Autodidactas",
+    desc: "Curiosos sin maestro. MIMIR te diseña el plan que te falta para avanzar por tu cuenta y no perderte en internet.",
+    img: IMG_AUTODIDACTA,
+    testid: "audience-autodidactas",
+  },
+  {
+    icon: Award,
+    title: "Esfuérzate",
+    desc: "El conocimiento no se regala, se conquista. MIMIR está a tu lado: tú pones el esfuerzo, nosotros las herramientas.",
+    img: IMG_ESFUERZATE,
+    testid: "audience-esfuerzate",
+  },
+];
+
+const AUTOPLAY_MS = 10000;
+
 function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true, align: "start", containScroll: "trimSnaps" });
+  const trackRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [tick, setTick] = useState(0); // al cambiar, el contador de 10s se reinicia
+  const cards = AUDIENCE_CARDS;
+  const n = cards.length;
 
-  const cards: { icon: LucideIcon; title: string; desc: string; img: string; testid: string }[] = [
-    {
-      icon: School,
-      title: "Estudiantes de básica",
-      desc: "Explicaciones simples, ejemplos cotidianos y refuerzo de fundamentos. Aprende a tu ritmo, con paciencia.",
-      img: IMG_GRADUACION,
-      testid: "audience-basica",
-    },
-    {
-      icon: GraduationCap,
-      title: "Estudiantes de media",
-      desc: "Preparación para ICFES, ensayos, matemáticas avanzadas y ciencias. Tu próximo grado, con respaldo real.",
-      img: IMG_IE_REAL,
-      testid: "audience-media",
-    },
-    {
-      icon: BookOpen,
-      title: "Autodidactas",
-      desc: "Curiosos sin maestro. MIMIR te diseña el plan que te falta para avanzar por tu cuenta y no perderte en internet.",
-      img: IMG_AUTODIDACTA,
-      testid: "audience-autodidactas",
-    },
-    {
-      icon: Award,
-      title: "Esfuérzate",
-      desc: "El conocimiento no se regala, se conquista. MIMIR está a tu lado: tú pones el esfuerzo, nosotros las herramientas.",
-      img: IMG_ESFUERZATE,
-      testid: "audience-esfuerzate",
-    },
-  ];
+  const scrollToSlide = (i: number) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const slide = el.children[i] as HTMLElement | undefined;
+    if (!slide) return;
+    slide.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+  };
 
-  const onSelect = useCallback(() => {
-    if (!emblaApi) return;
-    setSelectedIndex(emblaApi.selectedScrollSnap());
-  }, [emblaApi]);
-
+  // Detectar la tarjeta visible al hacer scroll (manual o por autoplay)
   useEffect(() => {
-    if (!emblaApi) return;
-    onSelect();
-    emblaApi.on("select", onSelect);
-    emblaApi.on("reInit", onSelect);
-  }, [emblaApi, onSelect]);
+    const el = trackRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const kids = Array.from(el.children) as HTMLElement[];
+        if (!kids.length) return;
+        const step = kids[0].offsetWidth + 20; // ancho de tarjeta + gap
+        const idx = Math.min(n - 1, Math.max(0, Math.round(el.scrollLeft / step)));
+        setSelectedIndex(idx);
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(raf);
+    };
+  }, [n]);
 
-  // Autoplay cíclico: cada 10 segundos pasa a la siguiente (loop:true la devuelve al inicio).
-  // Dependiendo de `tick`, cualquier navegación manual reinicia el contador.
+  const goNext = () => {
+    scrollToSlide(selectedIndex >= n - 1 ? 0 : selectedIndex + 1);
+  };
+  const goPrev = () => {
+    scrollToSlide(selectedIndex <= 0 ? n - 1 : selectedIndex - 1);
+  };
+
+  // Autoplay cíclico cada 10s. `tick` cambia en cada acción manual → el contador se reinicia.
   useEffect(() => {
-    if (!emblaApi) return;
-    const id = window.setInterval(() => emblaApi.scrollNext(), 10000);
+    const id = window.setInterval(() => {
+      const el = trackRef.current;
+      if (!el) return;
+      const kids = Array.from(el.children) as HTMLElement[];
+      if (!kids.length) return;
+      const step = kids[0].offsetWidth + 20;
+      const current = Math.min(n - 1, Math.max(0, Math.round(el.scrollLeft / step)));
+      scrollToSlide(current >= n - 1 ? 0 : current + 1);
+    }, AUTOPLAY_MS);
     return () => window.clearInterval(id);
-  }, [emblaApi, tick]);
+  }, [tick, n]);
 
   const handleCardClick = () => {
     if (user) navigate("/chat");
@@ -493,18 +527,15 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
   };
 
   const scrollPrev = () => {
-    if (!emblaApi) return;
-    emblaApi.scrollPrev();
+    goPrev();
     setTick((t) => t + 1);
   };
   const scrollNext = () => {
-    if (!emblaApi) return;
-    emblaApi.scrollNext();
+    goNext();
     setTick((t) => t + 1);
   };
   const scrollTo = (i: number) => {
-    if (!emblaApi) return;
-    emblaApi.scrollTo(i);
+    scrollToSlide(i);
     setTick((t) => t + 1);
   };
 
@@ -538,15 +569,18 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
           </div>
         </div>
 
-        <div className="-mx-6 overflow-hidden px-6" ref={emblaRef} data-testid="audience-carousel">
-          <div className="flex gap-5 md:gap-6">
-            {cards.map((c) => (
-              <article
-                key={c.title}
-                data-testid={c.testid}
-                onClick={handleCardClick}
-                className="group w-[85%] shrink-0 cursor-pointer overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--brand)] hover:shadow-[0_8px_28px_var(--shadow-brand)] sm:w-[60%] md:w-[45%] lg:w-[31%]"
-              >
+        <div
+          className="scrollbar-hide -mx-6 flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth px-6 pb-2 md:gap-6 md:px-12"
+          ref={trackRef}
+          data-testid="audience-carousel"
+        >
+          {cards.map((c) => (
+            <article
+              key={c.title}
+              data-testid={c.testid}
+              onClick={handleCardClick}
+              className="group w-[85%] shrink-0 cursor-pointer snap-start overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--brand)] hover:shadow-[0_8px_28px_var(--shadow-brand)] sm:w-[60%] md:w-[45%] lg:w-[31%]"
+            >
                 <div className="relative h-56 overflow-hidden bg-[var(--border-soft)]">
                   <img
                     src={c.img}
@@ -566,7 +600,6 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
                 </div>
               </article>
             ))}
-          </div>
         </div>
 
         {/* Dots */}
@@ -661,8 +694,8 @@ function InstitutionSection() {
 function FAQ() {
   const faqs = [
     { q: "¿MIMIR IA es realmente gratuito para los estudiantes?", a: "Sí. El proyecto nació en el SENA con vocación de impacto social. La plataforma es de acceso libre para estudiantes de la institución y, en su fase abierta, para cualquier estudiante hispanohablante." },
-    { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Al registrarte recibes un ID único (por ejemplo #001) que se guarda en la base de datos y vincula todo tu historial de conversaciones, para que puedas volver a ellas cuando quieras." },
-    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza modelos de inteligencia artificial avanzados (GPT-5-mini) entrenados con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
+    { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Necesitas registrarte con un nombre de usuario para guardar tu historial de chats y volver a ellos cuando quieras." },
+    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza modelos de inteligencia artificial avanzados entrenados con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
     { q: "¿Reemplaza a un profesor?", a: "No. MIMIR es un complemento: explica conceptos, da ejemplos y propone rutas de estudio. El acompañamiento docente sigue siendo irremplazable. Nuestra meta es reducir su carga repetitiva, no eliminar su rol." },
     { q: "¿Qué tan precisa es la información?", a: "MIMIR puede cometer errores como cualquier IA. Por eso siempre citamos fuentes: para que el estudiante desarrolle pensamiento crítico verificándolas. Esa es justamente la habilidad que queremos fomentar." },
     { q: "¿Mis datos están seguros?", a: "Cumplimos con la Ley 1581 de 2012 de Protección de Datos Personales. No vendemos tus datos. Las contraseñas se guardan encriptadas y las conversaciones se usan únicamente para mejorar tu experiencia." },

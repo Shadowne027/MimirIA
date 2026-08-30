@@ -50,11 +50,26 @@ export async function isApiAvailable(): Promise<boolean> {
     const t = window.setTimeout(() => ctrl.abort(), 2500);
     const res = await fetch("/api/health", { signal: ctrl.signal });
     window.clearTimeout(t);
-    apiStatus = res.ok;
+    // El backend real responde JSON con { ok: true }. Un hosting estático
+    // puede devolver index.html con 200; eso NO cuenta como API disponible.
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || !ct.includes("application/json")) {
+      apiStatus = false;
+      return false;
+    }
+    const data = await res.json().catch(() => null);
+    apiStatus = !!(data && data.ok === true);
   } catch {
     apiStatus = false;
   }
   return apiStatus;
+}
+
+/** Lee una respuesta de la API; si no es JSON válido, la API no está presente. */
+async function parseApiResponse(res: Response): Promise<any | null> {
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) return null;
+  return res.json().catch(() => null);
 }
 
 /* ---------------- Almacén demo (localStorage) ---------------- */
@@ -74,7 +89,11 @@ function readUsers(): StoredUser[] {
   }
 }
 function writeUsers(users: StoredUser[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  try {
+    localStorage.setItem(USERS_KEY, JSON.stringify(users));
+  } catch {
+    throw new Error("Tu navegador bloqueó el almacenamiento local y no se pudo guardar la cuenta.");
+  }
 }
 function toAuthUser(u: StoredUser): AuthUser {
   return { userId: u.userId, id: u.id, username: u.username, token: `demo.${u.userId}`, demo: true };
@@ -119,9 +138,11 @@ export async function register(username: string, password: string): Promise<Auth
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: uname, password }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.user) throw new Error(data.error || "No se pudo crear la cuenta.");
-    return { ...data.user, demo: false };
+    const data = await parseApiResponse(res);
+    if (data?.user) return { ...data.user, demo: false };
+    if (data?.error) throw new Error(data.error);
+    // Respuesta no-JSON: el backend no está realmente presente → modo demo
+    apiStatus = false;
   }
 
   // Modo demo
@@ -146,15 +167,24 @@ export async function login(username: string, password: string): Promise<AuthUse
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: uname, password }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.user) throw new Error(data.error || "Usuario o contraseña incorrectos.");
-    return { ...data.user, demo: false };
+    const data = await parseApiResponse(res);
+    if (data?.user) return { ...data.user, demo: false };
+    if (data?.error) throw new Error(data.error);
+    // Respuesta no-JSON: el backend no está realmente presente → modo demo
+    apiStatus = false;
   }
 
   // Modo demo
   await sleep(600);
-  const u = readUsers().find((x) => x.username.toLowerCase() === uname.toLowerCase());
-  if (!u || u.pass !== password) throw new Error("Usuario o contraseña incorrectos.");
+  const users = readUsers();
+  const u = users.find((x) => x.username.toLowerCase() === uname.toLowerCase());
+  if (!u)
+    throw new Error(
+      users.length === 0
+        ? "No hay cuentas creadas todavía en este navegador. Primero crea una cuenta."
+        : "No existe una cuenta con ese nombre de usuario. Verifica el nombre o crea una cuenta."
+    );
+  if (u.pass !== password) throw new Error("Contraseña incorrecta. Inténtalo de nuevo.");
   return toAuthUser(u);
 }
 
