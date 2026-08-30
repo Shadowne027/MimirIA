@@ -1,5 +1,25 @@
+# Dependencias (Vercel las instala solo)
 node_modules/
-.next/
+
+# Compilados (Vercel compila solo)
 dist/
 build/
+.next/
+
+# ⚠️ Variables de entorno con claves REALES — NUNCA se suben
+# (se configuran en Vercel → Settings → Environment Variables)
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Estado local de Vercel
+.vercel/
+
+# Sistema y editores
 *.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
