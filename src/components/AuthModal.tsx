@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AlertCircle, Eye, EyeOff, Fingerprint, Loader2, Lock, User as UserIcon } from "lucide-react";
 import {
   Dialog,
@@ -87,6 +88,7 @@ export function AuthModal({
   defaultMode?: "login" | "register";
 }) {
   const { login, register } = useAuth();
+  const navigate = useNavigate();
   const [mode, setMode] = useState<"login" | "register">(defaultMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -144,6 +146,7 @@ export function AuthModal({
         });
       }
       onOpenChange(false);
+      navigate("/chat");
     } catch (err) {
       setError(formatApiError(err));
     } finally {

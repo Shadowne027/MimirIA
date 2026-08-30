@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button, Input, Badge, Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "../components/ui";
-import { Toaster } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
 import { AuthModal } from "../components/AuthModal";
 import { HERO_BG, SCHOOL_IMG, TECH_IMG, YGG_LOGO, IMG_GRADUACION, IMG_IE_REAL, IMG_AUTODIDACTA, IMG_ESFUERZATE } from "../lib/assets";
@@ -865,7 +864,6 @@ export default function LandingPage() {
       </main>
       <Footer />
       <AuthModal open={authOpen} onOpenChange={setAuthOpen} defaultMode={authMode} />
-      <Toaster position="top-center" richColors />
     </div>
   );
 }
