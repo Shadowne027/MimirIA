@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Sparkles, BookOpen, Compass, Brain, Clock, Globe, ArrowRight,
@@ -459,67 +459,131 @@ const AUDIENCE_CARDS: { icon: LucideIcon; title: string; desc: string; img: stri
   },
 ];
 
-const AUTOPLAY_MS = 10000;
+const AUTOPLAY_MS = 10000; // pasa de imagen cada 10 segundos
+const VISIBLE = 3; // tarjetas visibles a la vez en pantallas grandes
 
 function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [dotIndex, setDotIndex] = useState(0);
+  const dotIndexRef = useRef(0);
   const [tick, setTick] = useState(0); // al cambiar, el contador de 10s se reinicia
+
   const cards = AUDIENCE_CARDS;
   const n = cards.length;
+  const OFFSET = VISIBLE; // índice donde empiezan las tarjetas reales
+  // Clones a los lados: hacen que el bucle sea continuo (la imagen que falta aparece al girar)
+  const extended = [...cards.slice(-VISIBLE), ...cards, ...cards.slice(0, VISIBLE)];
 
-  const scrollToSlide = (i: number) => {
-    const el = trackRef.current;
-    if (!el) return;
-    const slide = el.children[i] as HTMLElement | undefined;
-    if (!slide) return;
-    slide.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+  const setDot = (i: number) => {
+    dotIndexRef.current = i;
+    setDotIndex(i);
   };
 
-  // Detectar la tarjeta visible al hacer scroll (manual o por autoplay)
-  useEffect(() => {
-    const el = trackRef.current;
+  const stepOf = (el: HTMLDivElement) => {
+    const first = el.children[0] as HTMLElement | undefined;
+    if (!first) return 0;
+    const gap = parseFloat(window.getComputedStyle(el).columnGap) || 0;
+    return first.offsetWidth + gap;
+  };
+  const currentP = (el: HTMLDivElement) => {
+    const s = stepOf(el);
+    return s ? Math.round(el.scrollLeft / s) : 0;
+  };
+  const goTo = (el: HTMLDivElement, p: number, smooth: boolean) => {
+    const s = stepOf(el);
+    if (!s) return;
+    el.scrollTo({ left: p * s, behavior: smooth ? "smooth" : "auto" });
+  };
+
+  // Si el scroll termina sobre la zona de clones, salta en silencio a su equivalente real
+  const normalize = () => {
+    const el = scrollerRef.current;
     if (!el) return;
-    let raf = 0;
+    let p = currentP(el);
+    if (p >= OFFSET + n) p -= n;
+    else if (p <= OFFSET - 1) p += n;
+    else return;
+    goTo(el, p, false);
+    setDot(((p - OFFSET) % n + n) % n);
+  };
+
+  // Posición inicial + sincronización de los puntos con el scroll
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    goTo(el, OFFSET, false);
+    let idle = 0;
     const onScroll = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const kids = Array.from(el.children) as HTMLElement[];
-        if (!kids.length) return;
-        const step = kids[0].offsetWidth + 20; // ancho de tarjeta + gap
-        const idx = Math.min(n - 1, Math.max(0, Math.round(el.scrollLeft / step)));
-        setSelectedIndex(idx);
-      });
+      const s = stepOf(el);
+      if (s) {
+        const p = Math.round(el.scrollLeft / s);
+        setDot(((p - OFFSET) % n + n) % n);
+      }
+      window.clearTimeout(idle);
+      idle = window.setTimeout(normalize, 150);
+    };
+    const onScrollEnd = () => {
+      window.clearTimeout(idle);
+      normalize();
     };
     el.addEventListener("scroll", onScroll, { passive: true });
+    const hasScrollEnd = "onscrollend" in window;
+    if (hasScrollEnd) el.addEventListener("scrollend", onScrollEnd);
     return () => {
       el.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(raf);
+      if (hasScrollEnd) el.removeEventListener("scrollend", onScrollEnd);
+      window.clearTimeout(idle);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [n]);
 
-  const goNext = () => {
-    scrollToSlide(selectedIndex >= n - 1 ? 0 : selectedIndex + 1);
-  };
-  const goPrev = () => {
-    scrollToSlide(selectedIndex <= 0 ? n - 1 : selectedIndex - 1);
+  // Al redimensionar la ventana, recoloca la tarjeta actual con la nueva medida
+  useEffect(() => {
+    const onResize = () => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      goTo(el, OFFSET + dotIndexRef.current, false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const fromRealZone = (el: HTMLDivElement) => {
+    let p = currentP(el);
+    if (p >= OFFSET + n || p <= OFFSET - 1) {
+      p = p >= OFFSET + n ? p - n : p + n;
+      goTo(el, p, false);
+    }
+    return p;
   };
 
-  // Autoplay cíclico cada 10s. `tick` cambia en cada acción manual → el contador se reinicia.
+  const next = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const p = fromRealZone(el);
+    requestAnimationFrame(() => goTo(el, p + 1, true));
+  };
+  const prev = () => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const p = fromRealZone(el);
+    requestAnimationFrame(() => goTo(el, p - 1, true));
+  };
+  const goReal = (i: number) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    fromRealZone(el);
+    requestAnimationFrame(() => goTo(el, OFFSET + i, true));
+  };
+
+  // Autoplay cíclico cada 10s. `tick` cambia con cada acción manual → el contador se reinicia.
   useEffect(() => {
-    const id = window.setInterval(() => {
-      const el = trackRef.current;
-      if (!el) return;
-      const kids = Array.from(el.children) as HTMLElement[];
-      if (!kids.length) return;
-      const step = kids[0].offsetWidth + 20;
-      const current = Math.min(n - 1, Math.max(0, Math.round(el.scrollLeft / step)));
-      scrollToSlide(current >= n - 1 ? 0 : current + 1);
-    }, AUTOPLAY_MS);
+    const id = window.setInterval(() => next(), AUTOPLAY_MS);
     return () => window.clearInterval(id);
-  }, [tick, n]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
 
   const handleCardClick = () => {
     if (user) navigate("/chat");
@@ -527,15 +591,15 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
   };
 
   const scrollPrev = () => {
-    goPrev();
+    prev();
     setTick((t) => t + 1);
   };
   const scrollNext = () => {
-    goNext();
+    next();
     setTick((t) => t + 1);
   };
   const scrollTo = (i: number) => {
-    scrollToSlide(i);
+    goReal(i);
     setTick((t) => t + 1);
   };
 
@@ -570,21 +634,26 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
         </div>
 
         <div
-          className="scrollbar-hide -mx-6 flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth px-6 pb-2 md:gap-6 md:px-12"
-          ref={trackRef}
+          ref={scrollerRef}
           data-testid="audience-carousel"
+          style={{ scrollPaddingLeft: 24 }}
+          onPointerDown={() => setTick((t) => t + 1)}
+          className="scrollbar-hide -mx-6 flex snap-x snap-mandatory gap-5 overflow-x-auto overscroll-x-contain px-6 pb-2 md:gap-6"
         >
-          {cards.map((c) => (
-            <article
-              key={c.title}
-              data-testid={c.testid}
-              onClick={handleCardClick}
-              className="group w-[85%] shrink-0 cursor-pointer snap-start overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--brand)] hover:shadow-[0_8px_28px_var(--shadow-brand)] sm:w-[60%] md:w-[45%] lg:w-[31%]"
-            >
+          {extended.map((c, i) => {
+            const isReal = i >= OFFSET && i < OFFSET + n;
+            return (
+              <article
+                key={`${c.title}-${i}`}
+                data-testid={isReal ? c.testid : `${c.testid}-clone`}
+                aria-hidden={!isReal}
+                onClick={handleCardClick}
+                className="group w-[85%] shrink-0 cursor-pointer snap-start overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--surface)] transition-all hover:border-[var(--brand)] hover:shadow-[0_8px_28px_var(--shadow-brand)] sm:w-[60%] md:w-[46%] lg:w-[calc((100%-48px)/3)]"
+              >
                 <div className="relative h-56 overflow-hidden bg-[var(--border-soft)]">
                   <img
                     src={c.img}
-                    alt={c.title}
+                    alt={isReal ? c.title : ""}
                     className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
                     loading="lazy"
                   />
@@ -599,19 +668,20 @@ function TargetAudienceCarousel({ onOpenAuth }: { onOpenAuth: (m: "login" | "reg
                   <p className="mt-2 text-sm leading-relaxed text-[var(--text-2)]">{c.desc}</p>
                 </div>
               </article>
-            ))}
+            );
+          })}
         </div>
 
-        {/* Dots */}
+        {/* Puntos — sincronizados con la tarjeta visible */}
         <div className="mt-8 flex justify-center gap-2">
           {cards.map((_, i) => (
             <button
               key={i}
               onClick={() => scrollTo(i)}
-              aria-label={`Ir a slide ${i + 1}`}
+              aria-label={`Ir a la tarjeta ${i + 1}`}
               data-testid={`carousel-dot-${i}`}
-              className={`h-1.5 rounded-full transition-all ${
-                selectedIndex === i ? "w-8 bg-[var(--brand)]" : "w-1.5 bg-[var(--text)]/20 hover:bg-[var(--text)]/40"
+              className={`h-1.5 cursor-pointer rounded-full transition-all ${
+                dotIndex === i ? "w-8 bg-[var(--brand)]" : "w-1.5 bg-[var(--text)]/20 hover:bg-[var(--text)]/40"
               }`}
             />
           ))}
@@ -694,8 +764,8 @@ function InstitutionSection() {
 function FAQ() {
   const faqs = [
     { q: "¿MIMIR IA es realmente gratuito para los estudiantes?", a: "Sí. El proyecto nació en el SENA con vocación de impacto social. La plataforma es de acceso libre para estudiantes de la institución y, en su fase abierta, para cualquier estudiante hispanohablante." },
-    { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Necesitas registrarte con un nombre de usuario para guardar tu historial de chats y volver a ellos cuando quieras." },
-    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza modelos de inteligencia artificial avanzados entrenados con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
+    { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Al registrarte recibes un ID único (por ejemplo #001) que se guarda en la base de datos y vincula todo tu historial de conversaciones, para que puedas volver a ellas cuando quieras." },
+    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza modelos de inteligencia artificial avanzados (GPT-5-mini) entrenados con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
     { q: "¿Reemplaza a un profesor?", a: "No. MIMIR es un complemento: explica conceptos, da ejemplos y propone rutas de estudio. El acompañamiento docente sigue siendo irremplazable. Nuestra meta es reducir su carga repetitiva, no eliminar su rol." },
     { q: "¿Qué tan precisa es la información?", a: "MIMIR puede cometer errores como cualquier IA. Por eso siempre citamos fuentes: para que el estudiante desarrolle pensamiento crítico verificándolas. Esa es justamente la habilidad que queremos fomentar." },
     { q: "¿Mis datos están seguros?", a: "Cumplimos con la Ley 1581 de 2012 de Protección de Datos Personales. No vendemos tus datos. Las contraseñas se guardan encriptadas y las conversaciones se usan únicamente para mejorar tu experiencia." },

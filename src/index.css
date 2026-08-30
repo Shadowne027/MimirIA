@@ -134,3 +134,17 @@ html {
   width: 0;
   height: 0;
 }
+
+/* ============ Cursor en elementos interactivos ============ */
+a,
+button,
+select,
+summary,
+[role="button"],
+label[for] {
+  cursor: pointer;
+}
+button:disabled,
+button[aria-disabled="true"] {
+  cursor: not-allowed;
+}

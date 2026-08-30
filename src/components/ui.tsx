@@ -124,13 +124,19 @@ export function AccordionTrigger({
         aria-expanded={open}
         onClick={() => setValue(open ? "" : itemValue)}
         className={cn(
-          "flex flex-1 items-center justify-between gap-4 text-sm font-medium transition-all hover:underline text-left",
+          "flex flex-1 cursor-pointer items-center justify-between gap-4 text-left text-sm font-medium transition-all hover:underline",
           className
         )}
         {...props}
       >
         {children}
-        <ChevronDown size={16} data-state={open ? "open" : "closed"} className={cn("acc-chevron shrink-0 text-[#64748B]", open && "text-[#065F46]")} />
+        <ChevronDown
+          size={17}
+          className={cn(
+            "shrink-0 text-[var(--text-3)] transition-transform duration-300",
+            open && "rotate-180 text-[var(--brand-text)]"
+          )}
+        />
       </button>
     </h3>
   );
@@ -145,8 +151,15 @@ export function AccordionContent({
   const itemValue = useContext(ItemValueCtx);
   const open = value === itemValue;
   return (
-    <div data-state={open ? "open" : "closed"} className="acc-content" {...props}>
-      <div className="acc-inner">
+    <div
+      data-state={open ? "open" : "closed"}
+      className={cn(
+        "grid transition-[grid-template-rows] duration-300 ease-out",
+        open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+      )}
+      {...props}
+    >
+      <div className="overflow-hidden">
         <div className={cn("text-sm", className)}>{children}</div>
       </div>
     </div>
