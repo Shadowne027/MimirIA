@@ -1,0 +1,108 @@
+/**
+ * Utilidades compartidas por las funciones serverless de MIMIR IA (Vercel).
+ * Requiere las variables de entorno: MONGODB_URI, OPENAI_API_KEY, TOKEN_SECRET.
+ */
+import { MongoClient } from "mongodb";
+import crypto from "node:crypto";
+
+const MONGODB_URI = process.env.MONGODB_URI;
+const TOKEN_SECRET = process.env.TOKEN_SECRET || "mimiria-dev-secret-cambiar-en-produccion";
+
+let clientPromise = null;
+
+export function getDb() {
+  if (!MONGODB_URI) throw new Error("MONGODB_URI no está configurada");
+  if (!clientPromise) {
+    if (!globalThis.__mimirMongo) {
+      globalThis.__mimirMongo = MongoClient.connect(MONGODB_URI, { maxPoolSize: 5 });
+    }
+    clientPromise = globalThis.__mimirMongo;
+  }
+  return clientPromise.then((client) => client.db("mimiria"));
+}
+
+/* ---------------- Contraseñas (scrypt, sin dependencias nativas) ---------------- */
+export function hashPassword(password, salt) {
+  return crypto.scryptSync(String(password), salt, 64).toString("hex");
+}
+
+/* ---------------- Tokens de sesión (HMAC) ---------------- */
+export function signToken(payload, ttlHours = 24 * 30) {
+  const body = Buffer
+    .from(JSON.stringify({ ...payload, exp: Date.now() + ttlHours * 3600_000 }))
+    .toString("base64url");
+  const sig = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+  return `${body}.${sig}`;
+}
+
+export function verifyToken(token) {
+  try {
+    const [body, sig] = String(token || "").split(".");
+    if (!body || !sig) return null;
+    const expected = crypto.createHmac("sha256", TOKEN_SECRET).update(body).digest("base64url");
+    if (sig.length !== expected.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (payload.exp && payload.exp < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- HTTP helpers ---------------- */
+export function send(res, status, body) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.status(status).json(body);
+}
+
+export function readBody(req) {
+  return new Promise((resolve) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(data || "{}"));
+      } catch {
+        resolve({});
+      }
+    });
+  });
+}
+
+/* ---------------- Autenticación ---------------- */
+export async function authUser(req) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  const payload = verifyToken(token);
+  if (!payload || typeof payload.userId !== "number") return null;
+  const db = await getDb();
+  const user = await db.collection("users").findOne({ userId: payload.userId });
+  return user || null;
+}
+
+/* ---------------- ID correlativo de estudiante ---------------- */
+export const displayId = (n) => `#${String(n).padStart(3, "0")}`;
+
+export async function nextUserId(db) {
+  const doc = await db
+    .collection("counters")
+    .findOneAndUpdate(
+      { _id: "users" },
+      { $inc: { seq: 1 } },
+      { upsert: true, returnDocument: "after" }
+    );
+  const value = doc?.value ?? doc; // el driver devuelve { value } o el documento según versión
+  return value?.seq ?? 1;
+}
+
+/* ---------------- Prompt del tutor ---------------- */
+export const SYSTEM_PROMPT = `Eres MIMIR IA, un tutor personal creado por estudiantes del SENA (ficha 3156695) para la Institución Educativa Gonzalo Rivera Laguado de Cúcuta, Colombia.
+
+Reglas:
+- Responde SIEMPRE en español, con tono cálido, paciente y motivador.
+- Explica paso a paso con estructura clara: usa **negritas**, listas numeradas y ejemplos.
+- Fomenta el pensamiento crítico: cierra invitando al estudiante a pensar con una pregunta.
+- Incluye entre 2 y 4 fuentes reales y verificables (Wikipedia, Khan Academy, sitios .edu, .gov, MDN, Britannica, Banrepcultural, Colombia Aprende...).
+- Responde ÚNICAMENTE con un objeto JSON válido (sin bloques de código ni texto exterior) con esta forma exacta:
+{"text": "tu explicación en markdown", "sources": [{"label": "Nombre — Tema", "url": "https://..."}], "followups": ["pregunta de seguimiento 1", "pregunta de seguimiento 2"]}`;
