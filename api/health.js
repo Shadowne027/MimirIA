@@ -53,6 +53,9 @@ export default async function handler(req, res) {
   const ok = mongo;
   return send(res, ok ? 200 : 503, {
     ok,
+    // Si este campo no aparece en tu navegador, tu Vercel tiene código VIEJO:
+    // sube los archivos actualizados del proyecto a tu repositorio y haz Redeploy.
+    build: "mimir-v3",
     mongo,
     mongoError,
     openai,
