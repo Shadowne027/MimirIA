@@ -1,4 +1,4 @@
-import { getDb, hashPassword, signToken, send, readBody, displayId } from "./_lib.js";
+import { getDb, hashPassword, signToken, send, readBody, displayId, mongoHint } from "./_lib.js";
 
 /** POST /api/login  { username, password } */
 export default async function handler(req, res) {
@@ -20,6 +20,6 @@ export default async function handler(req, res) {
       user: { userId: user.userId, id: displayId(user.userId), username: user.username, token },
     });
   } catch (e) {
-    return send(res, 500, { error: "No se pudo iniciar sesión. Intenta de nuevo." });
+    return send(res, 500, { error: mongoHint(e) });
   }
 }

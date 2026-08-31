@@ -14,11 +14,27 @@ export function getDb() {
   if (!MONGODB_URI) throw new Error("MONGODB_URI no está configurada");
   if (!clientPromise) {
     if (!globalThis.__mimirMongo) {
-      globalThis.__mimirMongo = MongoClient.connect(MONGODB_URI, { maxPoolSize: 5 });
+      globalThis.__mimirMongo = MongoClient.connect(MONGODB_URI, {
+        maxPoolSize: 5,
+        serverSelectionTimeoutMS: 8000,
+        appName: "mimiria",
+      });
     }
     clientPromise = globalThis.__mimirMongo;
   }
   return clientPromise.then((client) => client.db("mimiria"));
+}
+
+/** Traduce errores típicos de MongoDB a mensajes útiles (sin revelar la URI). */
+export function mongoHint(err) {
+  const msg = String(err?.message || err || "");
+  if (/Server selection timed out|ECONNREFUSED|ENOTFOUND|network/i.test(msg)) {
+    return "No se pudo conectar a MongoDB. Verifica la variable MONGODB_URI y en Atlas → Network Access permite la IP 0.0.0.0/0. Después haz Redeploy en Vercel.";
+  }
+  if (/bad auth|Authentication failed|auth/i.test(msg)) {
+    return "MongoDB rechazó la autenticación. Revisa usuario y contraseña dentro de MONGODB_URI (caracteres especiales deben ir codificados, ej. @ como %40).";
+  }
+  return "Error de base de datos: " + msg.slice(0, 160);
 }
 
 /* ---------------- Contraseñas (scrypt, sin dependencias nativas) ---------------- */

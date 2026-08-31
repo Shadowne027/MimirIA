@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { getDb, hashPassword, signToken, send, readBody, displayId, nextUserId } from "./_lib.js";
+import { getDb, hashPassword, signToken, send, readBody, displayId, nextUserId, mongoHint } from "./_lib.js";
 
 /**
  * POST /api/register  { username, password }
@@ -38,6 +38,6 @@ export default async function handler(req, res) {
       user: { userId: n, id: displayId(n), username: uname, token },
     });
   } catch (e) {
-    return send(res, 500, { error: "No se pudo crear la cuenta. Intenta de nuevo." });
+    return send(res, 500, { error: mongoHint(e) });
   }
 }

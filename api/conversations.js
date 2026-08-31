@@ -1,11 +1,11 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, send, readBody } from "./_lib.js";
+import { getDb, authUser, send, readBody, mongoHint } from "./_lib.js";
 
 /**
  * /api/conversations
- *  GET    → lista las conversaciones del usuario (con mensajes)
- *  POST   → crea una conversación nueva { title? }
- *  DELETE → elimina una conversación { id }
+ *  GET          → lista las conversaciones del usuario (con mensajes)
+ *  POST         → crea una conversación nueva { title? }
+ *  DELETE ?id=  → elimina una conversación (el id va por query para máxima compatibilidad)
  */
 export default async function handler(req, res) {
   try {
@@ -39,10 +39,12 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "DELETE") {
-      const { id } = await readBody(req);
+      const raw = req.query?.id || (await readBody(req)).id;
+      const id = String(raw || "");
+      if (!id) return send(res, 400, { error: "Falta el id de la conversación." });
       let deleted = 0;
       try {
-        const r = await col.deleteOne({ _id: new ObjectId(String(id)), userId: user.userId });
+        const r = await col.deleteOne({ _id: new ObjectId(id), userId: user.userId });
         deleted = r.deletedCount;
       } catch {
         deleted = 0;
@@ -53,6 +55,6 @@ export default async function handler(req, res) {
 
     return send(res, 405, { error: "Método no permitido" });
   } catch (e) {
-    return send(res, 500, { error: "Error interno del servidor." });
+    return send(res, 500, { error: mongoHint(e) });
   }
 }
