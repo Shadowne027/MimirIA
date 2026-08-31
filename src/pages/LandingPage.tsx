@@ -10,14 +10,14 @@ import type { LucideIcon } from "lucide-react";
 import { Button, Input, Badge, Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "../components/ui";
 import { useAuth } from "../contexts/AuthContext";
 import { AuthModal } from "../components/AuthModal";
-import { HERO_BG, SCHOOL_IMG, TECH_IMG, YGG_LOGO, IMG_GRADUACION, IMG_IE_REAL, IMG_AUTODIDACTA, IMG_ESFUERZATE } from "../lib/assets";
+import { HERO_BG, SCHOOL_IMG, TECH_IMG, LOGO, IMG_PRIMARIA, IMG_BACHILLERATO, IMG_AUTODIDACTA, IMG_ESFUERZATE } from "../lib/assets";
 
 const LogoMark = ({ size = 36 }: { size?: number }) => (
   <span
     className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]"
     style={{ width: size, height: size }}
   >
-    <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+    <img src={LOGO} alt="" className="h-full w-full object-cover" />
   </span>
 );
 
@@ -73,7 +73,7 @@ function Navbar({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void 
                 </div>
                 <div className="flex flex-col leading-tight">
                   <span className="max-w-[90px] truncate text-xs font-semibold text-[var(--text)]">{user.username}</span>
-                  <span className="font-mono text-[10px] text-[var(--amber)]">{user.id}{user.demo ? " · demo" : ""}</span>
+                  <span className="font-mono text-[10px] text-[var(--amber)]">{user.id}</span>
                 </div>
                 <button
                   onClick={logout}
@@ -136,7 +136,7 @@ function Navbar({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void 
                 </div>
                 <div className="leading-tight">
                   <div className="text-sm font-semibold text-[var(--text)]">{user.username}</div>
-                  <div className="font-mono text-[10px] text-[var(--amber)]">{user.id}{user.demo ? " · demo" : ""}</div>
+                  <div className="font-mono text-[10px] text-[var(--amber)]">{user.id}</div>
                 </div>
               </div>
               <Button
@@ -430,16 +430,16 @@ function HowItWorks() {
 const AUDIENCE_CARDS: { icon: LucideIcon; title: string; desc: string; img: string; testid: string }[] = [
   {
     icon: School,
-    title: "Estudiantes de básica",
+    title: "Primaria",
     desc: "Explicaciones simples, ejemplos cotidianos y refuerzo de fundamentos. Aprende a tu ritmo, con paciencia.",
-    img: IMG_GRADUACION,
+    img: IMG_PRIMARIA,
     testid: "audience-basica",
   },
   {
     icon: GraduationCap,
-    title: "Estudiantes de media",
+    title: "Bachillerato",
     desc: "Preparación para ICFES, ensayos, matemáticas avanzadas y ciencias. Tu próximo grado, con respaldo real.",
-    img: IMG_IE_REAL,
+    img: IMG_BACHILLERATO,
     testid: "audience-media",
   },
   {

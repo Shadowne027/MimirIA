@@ -13,7 +13,7 @@ import {
 } from "./ui";
 import { useAuth } from "../contexts/AuthContext";
 import { formatApiError } from "../lib/api";
-import { YGG_LOGO } from "../lib/assets";
+import { LOGO } from "../lib/assets";
 import { toast } from "sonner";
 
 function LogoCircle({ size = 48 }: { size?: number }) {
@@ -22,7 +22,7 @@ function LogoCircle({ size = 48 }: { size?: number }) {
       className="inline-flex items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]"
       style={{ width: size, height: size }}
     >
-      <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+      <img src={LOGO} alt="" className="h-full w-full object-cover" />
     </span>
   );
 }

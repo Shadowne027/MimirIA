@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
-import { YGG_LOGO } from "../lib/assets";
+import { LOGO } from "../lib/assets";
 import {
   getConversations,
   createConversation,
@@ -237,7 +237,7 @@ export default function ChatPage() {
           </button>
           <Link to="/" className="flex items-center gap-2.5">
             <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-              <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+              <img src={LOGO} alt="" className="h-full w-full object-cover" />
             </span>
             <span className="font-display text-lg font-semibold tracking-tight">
               MIMIR <span className="text-[var(--brand-text)]">IA</span>
@@ -375,7 +375,7 @@ export default function ChatPage() {
             ) : !active || active.messages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center px-6 text-center">
                 <span className="inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)] shadow-[0_10px_30px_var(--shadow-brand)]">
-                  <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+                  <img src={LOGO} alt="" className="h-full w-full object-cover" />
                 </span>
                 <h1 className="font-display mt-6 text-2xl font-semibold tracking-tight sm:text-3xl">
                   Hola{user ? `, ${user.username}` : ""}. Soy MIMIR.
@@ -413,7 +413,7 @@ export default function ChatPage() {
                   ) : (
                     <div key={i} className="flex gap-3">
                       <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                        <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+                        <img src={LOGO} alt="" className="h-full w-full object-cover" />
                       </span>
                       <div className="max-w-[90%] min-w-0">
                         <div className="rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-2)]">
@@ -468,7 +468,7 @@ export default function ChatPage() {
                 {thinking && (
                   <div className="flex items-center gap-3">
                     <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                      <img src={YGG_LOGO} alt="" className="h-full w-full object-cover" />
+                      <img src={LOGO} alt="" className="h-full w-full object-cover" />
                     </span>
                     <div className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-3)]">
                       <Loader2 size={13} className="animate-spin text-[var(--brand-text)]" />
