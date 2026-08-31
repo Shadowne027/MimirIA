@@ -73,7 +73,7 @@ function Navbar({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void 
                 </div>
                 <div className="flex flex-col leading-tight">
                   <span className="max-w-[90px] truncate text-xs font-semibold text-[var(--text)]">{user.username}</span>
-                  <span className="font-mono text-[10px] text-[var(--amber)]">{user.id}{user.demo ? " · demo" : ""}</span>
+                  <span className="font-mono text-[10px] text-[var(--amber)]">{user.id}</span>
                 </div>
                 <button
                   onClick={logout}
@@ -136,7 +136,7 @@ function Navbar({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void 
                 </div>
                 <div className="leading-tight">
                   <div className="text-sm font-semibold text-[var(--text)]">{user.username}</div>
-                  <div className="font-mono text-[10px] text-[var(--amber)]">{user.id}{user.demo ? " · demo" : ""}</div>
+                  <div className="font-mono text-[10px] text-[var(--amber)]">{user.id}</div>
                 </div>
               </div>
               <Button
