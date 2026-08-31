@@ -47,7 +47,8 @@ export async function isApiAvailable(): Promise<boolean> {
   if (apiStatus !== null) return apiStatus;
   try {
     const ctrl = new AbortController();
-    const t = window.setTimeout(() => ctrl.abort(), 2500);
+    // 7s: el primer llamado puede incluir el "cold start" de la función en Vercel
+    const t = window.setTimeout(() => ctrl.abort(), 7000);
     const res = await fetch("/api/health", { signal: ctrl.signal });
     window.clearTimeout(t);
     // El backend real responde JSON con { ok: true }. Un hosting estático
@@ -238,9 +239,11 @@ export async function getConversations(user: AuthUser): Promise<Conversation[]> 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         if (Array.isArray(data.conversations)) return data.conversations.map(normalizeServerConvo);
+      } else {
+        console.warn("[MIMIR] /api/conversations respondió", res.status, "→ usando historial local");
       }
-    } catch {
-      /* cae a demo */
+    } catch (e) {
+      console.warn("[MIMIR] fallo al cargar historial de la API → usando historial local", e);
     }
   }
   return readConvos(user.userId);
@@ -278,10 +281,9 @@ export async function createConversation(user: AuthUser, title = "Nueva conversa
 export async function deleteConversation(user: AuthUser, id: string): Promise<void> {
   if (!user.demo) {
     try {
-      await fetch("/api/conversations", {
+      await fetch(`/api/conversations?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: authHeaders(user.token),
-        body: JSON.stringify({ id }),
       });
     } catch {
       /* cae a demo */
@@ -302,23 +304,28 @@ export async function sendMessage(
   conversationId: string,
   message: string
 ): Promise<ChatReply> {
-  if (!user.demo) {
+  if (await isApiAvailable()) {
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: authHeaders(user.token),
         body: JSON.stringify({ conversationId, message }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.text) {
+      const data = await parseApiResponse(res);
+      if (data?.text) {
         return {
           text: data.text,
           sources: Array.isArray(data.sources) ? data.sources : undefined,
           followUps: Array.isArray(data.followups) ? data.followups : undefined,
         };
       }
-    } catch {
-      /* cae al motor local */
+      // El backend respondió con un error real: mostrarlo, no simular en silencio.
+      if (data?.error) throw new Error(data.error);
+      // Respuesta no-JSON: el backend no está realmente presente → modo local
+      apiStatus = false;
+    } catch (e) {
+      if (e instanceof Error && e.message) throw e;
+      /* error de red → cae al motor local */
     }
   }
   await sleep(700 + Math.random() * 800);

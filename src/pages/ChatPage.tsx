@@ -201,14 +201,16 @@ export default function ChatPage() {
         sources: reply.sources,
         followUps: reply.followUps,
       });
-    } catch {
+    } catch (err) {
       setThinking(false);
+      const detalle =
+        err instanceof Error && err.message
+          ? err.message
+          : "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
       patchConvo(targetId, (c) => ({
         ...c,
         messages: c.messages.map((m) =>
-          (m as ChatMessage & { id?: string }).id === asstId
-            ? { ...m, content: "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos." }
-            : m
+          (m as ChatMessage & { id?: string }).id === asstId ? { ...m, content: `⚠️ ${detalle}` } : m
         ),
       }));
       setStreamingId(null);

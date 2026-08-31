@@ -40,9 +40,33 @@ El contador de IDs vive en `counters` → cada registro nuevo recibe el siguient
 
 ## 4. Comprobación
 
+- **El paso clave:** abre en el navegador `https://tu-sitio.vercel.app/api/health`.
+  - `{"ok": true, "mongo": true, "openai": true}` → todo conectado.
+  - Si `mongo: false` → el JSON te dice el motivo exacto (lee `mongoError`).
+  - Si `openai: false` → revisa `openaiError` (clave inválida, sin saldo, etc.).
 - Abre la app y crea una cuenta: el toast te muestra tu ID (`#001`).
 - En el chat, el panel lateral debe decir **“API conectada · GPT-5-mini + MongoDB”**.
 - En Atlas verás los documentos en `users` y `conversations`, vinculados por `userId`.
+
+## 5. Si algo falla (solución de problemas)
+
+1. **¿Agregaste variables pero nada cambió?** Las variables de entorno solo aplican a
+   deploys nuevos. Ve a *Deployments → ⋯ → Redeploy* (marca "Use existing Build Cache"
+   si quieres que sea rápido). Sin Redeploy, las funciones siguen sin ver las variables.
+2. **Cuentas/historial no se comparten entre dispositivos** → significa que `/api/health`
+   está devolviendo `ok: false` (la página cae al modo local). Ábrelo y lee el error.
+3. **`mongoError: Server selection timed out`** → en MongoDB Atlas ve a
+   *Network Access* y agrega la IP `0.0.0.0/0` (Allow from anywhere). Vercel usa IPs variables.
+4. **`mongoError: bad auth / Authentication failed`** → el usuario o la contraseña dentro
+   de `MONGODB_URI` están mal. Si la contraseña tiene caracteres como `@`, `:`, `/`,
+   debes codificarlos (`@` → `%40`). Ejemplo correcto:
+   `mongodb+srv://juan:mi%40clave@cluster0.ab12c.mongodb.net/?retryWrites=true&w=majority`
+5. **La IA responde un error de OpenAI** → el chat ahora muestra el mensaje exacto:
+   - `401 Incorrect API key` → la clave está mal copiada (sobran espacios, falta un trozo).
+   - `429 / quota` → la cuenta de OpenAI no tiene saldo o excedió el límite.
+   - `model_not_found` → tu cuenta aún no tiene acceso a `gpt-5-mini`.
+6. **Los nombres de las variables deben ser exactos:** `MONGODB_URI`, `OPENAI_API_KEY`,
+   `TOKEN_SECRET` — sin espacios antes/después de la `=` ni de los valores.
 
 ## Estructura relevante
 
