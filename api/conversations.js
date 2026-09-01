@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, send, readBody, mongoHint } from "./_lib.js";
+import { getDb, authUser, send, readBody, mongoHint, preflight } from "./_lib.js";
 
 /**
  * /api/conversations
@@ -8,6 +8,7 @@ import { getDb, authUser, send, readBody, mongoHint } from "./_lib.js";
  *  DELETE ?id=  → elimina una conversación (el id va por query para máxima compatibilidad)
  */
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   try {
     const user = await authUser(req);
     if (!user) return send(res, 401, { error: "Sesión inválida. Inicia sesión de nuevo." });

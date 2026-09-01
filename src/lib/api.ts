@@ -1,29 +1,24 @@
 /**
- * Cliente de API de MIMIR IA.
- * - En producción (Vercel) habla con las funciones serverless de /api,
- *   que usan MongoDB (usuarios + historial) y GPT-5-mini (OpenAI).
- * - Si el backend no está disponible (p. ej. en local sin configurar),
- *   cae automáticamente a modo demo con almacenamiento local, asignando
- *   IDs correlativos (#001, #002…) igual que el servidor.
+ * Cliente de API de MIMIR IA — 100% en la nube.
+ * Todo (cuentas, historial y respuestas de la IA) vive en el servidor:
+ * MongoDB para datos y GPT-5-mini (OpenAI) para las respuestas.
+ * Si el servidor no responde, la app NO simula nada: muestra el error real.
  */
-import { findReply } from "./mimirSim";
-import type { MimirSource } from "./mimirSim";
 
 export interface AuthUser {
   userId: number;
   id: string; // "#001"
   username: string;
   token: string;
-  demo: boolean;
 }
 
 export interface ChatMessage {
-  id?: string;
   role: "user" | "assistant";
   content: string;
-  sources?: MimirSource[];
+  sources?: { label: string; url: string }[];
   followUps?: string[];
   at: number;
+  id?: string; // marcador temporal para la animación de escritura
 }
 
 export interface Conversation {
@@ -34,80 +29,91 @@ export interface Conversation {
   messages: ChatMessage[];
 }
 
-const TOKEN_KEY = "mimir_token";
-const USERS_KEY = "mimir_users";
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const fmtId = (n: number) => `#${String(n).padStart(3, "0")}`;
-
-/* ---------------- Detección del backend ---------------- */
-let apiStatus: boolean | null = null;
-
-export async function isApiAvailable(): Promise<boolean> {
-  if (apiStatus !== null) return apiStatus;
-  try {
-    const ctrl = new AbortController();
-    // 7s: el primer llamado puede incluir el "cold start" de la función en Vercel
-    const t = window.setTimeout(() => ctrl.abort(), 7000);
-    const res = await fetch("/api/health", { signal: ctrl.signal });
-    window.clearTimeout(t);
-    // El backend real responde JSON con { ok: true }. Un hosting estático
-    // puede devolver index.html con 200; eso NO cuenta como API disponible.
-    const ct = res.headers.get("content-type") || "";
-    if (!res.ok || !ct.includes("application/json")) {
-      apiStatus = false;
-      return false;
-    }
-    const data = await res.json().catch(() => null);
-    apiStatus = !!(data && data.ok === true);
-  } catch {
-    apiStatus = false;
-  }
-  return apiStatus;
+export interface HealthStatus {
+  reachable: boolean; // ¿el servidor responde?
+  ok: boolean; // ¿todo está bien configurado?
+  mongo: boolean;
+  mongoError?: string | null;
+  openai: boolean;
+  openaiError?: string | null;
+  build?: string;
 }
 
-/** Lee una respuesta de la API; si no es JSON válido, la API no está presente. */
+const TOKEN_KEY = "mimir_token";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function parseApiResponse(res: Response): Promise<any | null> {
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) return null;
   return res.json().catch(() => null);
 }
 
-/* ---------------- Almacén demo (localStorage) ---------------- */
-interface StoredUser {
-  userId: number;
-  id: string;
-  username: string;
-  pass: string;
-  createdAt: number;
-}
-
-function readUsers(): StoredUser[] {
-  try {
-    return JSON.parse(localStorage.getItem(USERS_KEY) || "[]") as StoredUser[];
-  } catch {
-    return [];
-  }
-}
-function writeUsers(users: StoredUser[]) {
-  try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  } catch {
-    throw new Error("Tu navegador bloqueó el almacenamiento local y no se pudo guardar la cuenta.");
-  }
-}
-function toAuthUser(u: StoredUser): AuthUser {
-  return { userId: u.userId, id: u.id, username: u.username, token: `demo.${u.userId}`, demo: true };
-}
-
-const authHeaders = (token: string): HeadersInit => ({
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${token}`,
-});
-
 export function formatApiError(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
   return "Ocurrió un error inesperado. Intenta de nuevo.";
+}
+
+/* ---------------- Diagnóstico del servidor ---------------- */
+let healthCache: HealthStatus | null = null;
+
+/**
+ * Consulta /api/health (con reintentos, porque el primer llamado en Vercel
+ * incluye el arranque en frío y puede tardar varios segundos).
+ */
+export async function getHealth(force = false): Promise<HealthStatus> {
+  if (healthCache && !force) return healthCache;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const t = window.setTimeout(() => ctrl.abort(), 12000);
+      const res = await fetch("/api/health", { signal: ctrl.signal });
+      window.clearTimeout(t);
+      const data = await parseApiResponse(res);
+      if (data && typeof data === "object" && "mongo" in data) {
+        const status: HealthStatus = {
+          reachable: true,
+          ok: !!data.ok,
+          mongo: !!data.mongo,
+          mongoError: data.mongoError ?? null,
+          openai: !!data.openai,
+          openaiError: data.openaiError ?? null,
+          build: data.build,
+        };
+        healthCache = status;
+        return status;
+      }
+      // Respuesta no-JSON: no hay funciones serverless desplegadas
+      healthCache = {
+        reachable: false,
+        ok: false,
+        mongo: false,
+        mongoError: "El servidor no tiene las funciones /api desplegadas. Sube la carpeta api/ a tu repositorio y haz Redeploy en Vercel.",
+        openai: false,
+      };
+      return healthCache;
+    } catch {
+      if (attempt === 0) await sleep(800);
+    }
+  }
+  healthCache = {
+    reachable: false,
+    ok: false,
+    mongo: false,
+    mongoError: "No se pudo contactar al servidor de MIMIR. Revisa tu conexión a internet e inténtalo de nuevo.",
+    openai: false,
+  };
+  return healthCache;
+}
+
+async function requireServer(): Promise<void> {
+  const h = await getHealth();
+  if (!h.ok) {
+    throw new Error(
+      h.reachable
+        ? `MIMIR no está en línea: ${h.mongoError || h.openaiError || "el servidor reporta un problema de configuración."}`
+        : h.mongoError || "No se pudo contactar al servidor de MIMIR."
+    );
+  }
 }
 
 /* ---------------- Token de sesión ---------------- */
@@ -127,101 +133,55 @@ export function loadToken(): string | null {
   }
 }
 
-/* ---------------- Autenticación ---------------- */
+const authHeaders = (token: string): HeadersInit => ({
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${token}`,
+});
+
+/* ---------------- Autenticación (MongoDB) ---------------- */
 export async function register(username: string, password: string): Promise<AuthUser> {
   const uname = username.trim();
   if (uname.length < 2) throw new Error("El nombre de usuario debe tener al menos 2 caracteres.");
   if (password.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
 
-  if (await isApiAvailable()) {
-    const res = await fetch("/api/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: uname, password }),
-    });
-    const data = await parseApiResponse(res);
-    if (data?.user) return { ...data.user, demo: false };
-    if (data?.error) throw new Error(data.error);
-    // Respuesta no-JSON: el backend no está realmente presente → modo demo
-    apiStatus = false;
-  }
-
-  // Modo demo
-  await sleep(700);
-  const users = readUsers();
-  if (users.some((u) => u.username.toLowerCase() === uname.toLowerCase()))
-    throw new Error("Ese nombre de usuario ya está registrado.");
-  const n = users.reduce((m, u) => Math.max(m, u.userId), 0) + 1;
-  const stored: StoredUser = { userId: n, id: fmtId(n), username: uname, pass: password, createdAt: Date.now() };
-  users.push(stored);
-  writeUsers(users);
-  return toAuthUser(stored);
+  await requireServer();
+  const res = await fetch("/api/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: uname, password }),
+  });
+  const data = await parseApiResponse(res);
+  if (data?.user) return data.user as AuthUser;
+  throw new Error(data?.error || "No se pudo crear la cuenta. Intenta de nuevo.");
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
   const uname = username.trim();
   if (!uname || !password) throw new Error("Escribe tu usuario y tu contraseña.");
 
-  if (await isApiAvailable()) {
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: uname, password }),
-    });
-    const data = await parseApiResponse(res);
-    if (data?.user) return { ...data.user, demo: false };
-    if (data?.error) throw new Error(data.error);
-    // Respuesta no-JSON: el backend no está realmente presente → modo demo
-    apiStatus = false;
-  }
-
-  // Modo demo
-  await sleep(600);
-  const users = readUsers();
-  const u = users.find((x) => x.username.toLowerCase() === uname.toLowerCase());
-  if (!u)
-    throw new Error(
-      users.length === 0
-        ? "No hay cuentas creadas todavía en este navegador. Primero crea una cuenta."
-        : "No existe una cuenta con ese nombre de usuario. Verifica el nombre o crea una cuenta."
-    );
-  if (u.pass !== password) throw new Error("Contraseña incorrecta. Inténtalo de nuevo.");
-  return toAuthUser(u);
+  await requireServer();
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: uname, password }),
+  });
+  const data = await parseApiResponse(res);
+  if (data?.user) return data.user as AuthUser;
+  throw new Error(data?.error || "Usuario o contraseña incorrectos.");
 }
 
 export async function me(token: string): Promise<AuthUser | null> {
-  if (token.startsWith("demo.")) {
-    const n = Number(token.split(".")[1]);
-    const u = readUsers().find((x) => x.userId === n);
-    return u ? toAuthUser(u) : null;
-  }
-  if (await isApiAvailable()) {
-    try {
-      const res = await fetch("/api/me", { headers: authHeaders(token) });
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => ({}));
-      return data.user ? { ...data.user, token, demo: false } : null;
-    } catch {
-      return null;
-    }
+  try {
+    const res = await fetch("/api/me", { headers: authHeaders(token) });
+    const data = await parseApiResponse(res);
+    if (res.ok && data?.user) return { ...(data.user as AuthUser), token };
+  } catch {
+    /* sin servidor */
   }
   return null;
 }
 
-/* ---------------- Conversaciones (historial) ---------------- */
-const convKey = (userId: number) => `mimir_convos_${userId}`;
-
-function readConvos(userId: number): Conversation[] {
-  try {
-    return JSON.parse(localStorage.getItem(convKey(userId)) || "[]") as Conversation[];
-  } catch {
-    return [];
-  }
-}
-export function writeConvos(userId: number, list: Conversation[]) {
-  localStorage.setItem(convKey(userId), JSON.stringify(list));
-}
-
+/* ---------------- Conversaciones (historial en MongoDB) ---------------- */
 function normalizeServerConvo(doc: any): Conversation {
   return {
     id: String(doc.id ?? doc._id),
@@ -233,69 +193,41 @@ function normalizeServerConvo(doc: any): Conversation {
 }
 
 export async function getConversations(user: AuthUser): Promise<Conversation[]> {
-  if (!user.demo) {
-    try {
-      const res = await fetch("/api/conversations", { headers: authHeaders(user.token) });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (Array.isArray(data.conversations)) return data.conversations.map(normalizeServerConvo);
-      } else {
-        console.warn("[MIMIR] /api/conversations respondió", res.status, "→ usando historial local");
-      }
-    } catch (e) {
-      console.warn("[MIMIR] fallo al cargar historial de la API → usando historial local", e);
-    }
+  await requireServer();
+  const res = await fetch("/api/conversations", { headers: authHeaders(user.token) });
+  const data = await parseApiResponse(res);
+  if (res.ok && Array.isArray(data?.conversations)) {
+    return data.conversations.map(normalizeServerConvo);
   }
-  return readConvos(user.userId);
+  throw new Error(data?.error || "No se pudo cargar tu historial.");
 }
 
 export async function createConversation(user: AuthUser, title = "Nueva conversación"): Promise<Conversation> {
-  if (!user.demo) {
-    try {
-      const res = await fetch("/api/conversations", {
-        method: "POST",
-        headers: authHeaders(user.token),
-        body: JSON.stringify({ title }),
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (data.conversation) return normalizeServerConvo(data.conversation);
-      }
-    } catch {
-      /* cae a demo */
-    }
-  }
-  const list = readConvos(user.userId);
-  const c: Conversation = {
-    id: `local_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-    title,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    messages: [],
-  };
-  list.unshift(c);
-  writeConvos(user.userId, list);
-  return c;
+  await requireServer();
+  const res = await fetch("/api/conversations", {
+    method: "POST",
+    headers: authHeaders(user.token),
+    body: JSON.stringify({ title }),
+  });
+  const data = await parseApiResponse(res);
+  if (res.ok && data?.conversation) return normalizeServerConvo(data.conversation);
+  throw new Error(data?.error || "No se pudo crear la conversación.");
 }
 
 export async function deleteConversation(user: AuthUser, id: string): Promise<void> {
-  if (!user.demo) {
-    try {
-      await fetch(`/api/conversations?id=${encodeURIComponent(id)}`, {
-        method: "DELETE",
-        headers: authHeaders(user.token),
-      });
-    } catch {
-      /* cae a demo */
-    }
-  }
-  writeConvos(user.userId, readConvos(user.userId).filter((c) => c.id !== id));
+  await requireServer();
+  const res = await fetch(`/api/conversations?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders(user.token),
+  });
+  const data = await parseApiResponse(res);
+  if (!res.ok) throw new Error(data?.error || "No se pudo eliminar la conversación.");
 }
 
-/* ---------------- Chat ---------------- */
+/* ---------------- Chat (GPT-5-mini) ---------------- */
 export interface ChatReply {
   text: string;
-  sources?: MimirSource[];
+  sources?: { label: string; url: string }[];
   followUps?: string[];
 }
 
@@ -304,31 +236,19 @@ export async function sendMessage(
   conversationId: string,
   message: string
 ): Promise<ChatReply> {
-  if (await isApiAvailable()) {
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: authHeaders(user.token),
-        body: JSON.stringify({ conversationId, message }),
-      });
-      const data = await parseApiResponse(res);
-      if (data?.text) {
-        return {
-          text: data.text,
-          sources: Array.isArray(data.sources) ? data.sources : undefined,
-          followUps: Array.isArray(data.followups) ? data.followups : undefined,
-        };
-      }
-      // El backend respondió con un error real: mostrarlo, no simular en silencio.
-      if (data?.error) throw new Error(data.error);
-      // Respuesta no-JSON: el backend no está realmente presente → modo local
-      apiStatus = false;
-    } catch (e) {
-      if (e instanceof Error && e.message) throw e;
-      /* error de red → cae al motor local */
-    }
+  await requireServer();
+  const res = await fetch("/api/chat", {
+    method: "POST",
+    headers: authHeaders(user.token),
+    body: JSON.stringify({ conversationId, message }),
+  });
+  const data = await parseApiResponse(res);
+  if (res.ok && data?.text) {
+    return {
+      text: data.text,
+      sources: Array.isArray(data.sources) ? data.sources : undefined,
+      followUps: Array.isArray(data.followups) ? data.followups : undefined,
+    };
   }
-  await sleep(700 + Math.random() * 800);
-  const reply = findReply(message);
-  return { text: reply.text, sources: reply.sources, followUps: reply.followUps };
+  throw new Error(data?.error || "La IA no respondió. Intenta de nuevo en unos segundos.");
 }

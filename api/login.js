@@ -1,7 +1,8 @@
-import { getDb, hashPassword, signToken, send, readBody, displayId, mongoHint } from "./_lib.js";
+import { getDb, hashPassword, signToken, send, readBody, displayId, mongoHint, preflight } from "./_lib.js";
 
 /** POST /api/login  { username, password } */
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
   try {
     const { username, password } = await readBody(req);

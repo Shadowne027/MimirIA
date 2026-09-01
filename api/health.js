@@ -1,4 +1,4 @@
-import { getDb, send } from "./_lib.js";
+import { getDb, send, preflight } from "./_lib.js";
 
 /**
  * GET /api/health
@@ -7,6 +7,7 @@ import { getDb, send } from "./_lib.js";
  *   https://tu-sitio.vercel.app/api/health
  */
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   if (req.method !== "GET") return send(res, 405, { error: "Método no permitido" });
 
   const hasMongoUri = Boolean(process.env.MONGODB_URI);
@@ -53,6 +54,9 @@ export default async function handler(req, res) {
   const ok = mongo;
   return send(res, ok ? 200 : 503, {
     ok,
+    // Si este campo no aparece en tu navegador, tu Vercel tiene código VIEJO:
+    // sube los archivos actualizados del proyecto a tu repositorio y haz Redeploy.
+    build: "mimir-v4",
     mongo,
     mongoError,
     openai,
