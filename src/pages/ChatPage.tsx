@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   Compass, ExternalLink, Globe, Loader2, LogOut, Menu,
-  Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff,
+  Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff, RefreshCw, AlertTriangle,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
@@ -12,10 +12,10 @@ import {
   createConversation,
   deleteConversation,
   sendMessage,
-  isApiAvailable,
-  writeConvos,
+  getHealth,
+  formatApiError,
 } from "../lib/api";
-import type { AuthUser, ChatMessage, Conversation } from "../lib/api";
+import type { AuthUser, ChatMessage, Conversation, HealthStatus } from "../lib/api";
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -54,24 +54,36 @@ export default function ChatPage() {
   const [thinking, setThinking] = useState(false);
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamTimer = useRef<number | null>(null);
 
-  // Cargar historial (MongoDB vía API, o almacenamiento local en modo demo)
+  // Cargar diagnóstico del servidor + historial desde MongoDB
+  const loadAll = async (forceHealth = false) => {
+    if (!user) return;
+    setLoadingHistory(true);
+    const h = await getHealth(forceHealth);
+    setHealth(h);
+    if (h.ok) {
+      try {
+        const convos = await getConversations(user);
+        setConversations(convos);
+        setActiveId((cur) => cur ?? convos[0]?.id ?? null);
+        if (forceHealth) toast.success("Conectado con MIMIR en la nube");
+      } catch (e) {
+        toast.error(formatApiError(e));
+      }
+    }
+    setLoadingHistory(false);
+  };
+
   useEffect(() => {
     if (!user) return;
     let alive = true;
     (async () => {
-      setLoadingHistory(true);
-      const [convos, online] = await Promise.all([getConversations(user), isApiAvailable()]);
+      await loadAll();
       if (!alive) return;
-      setApiOnline(online);
-      setConversations(convos);
-      setActiveId(convos[0]?.id ?? null);
-      setLoadingHistory(false);
-
       // Si la landing envió una pregunta ("Empieza ahora"), dejarla lista en el input
       const prefill = sessionStorage.getItem("mimir_first_prompt");
       if (prefill) {
@@ -82,13 +94,8 @@ export default function ChatPage() {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
-
-  // Persistencia local solo en modo demo (con la API, el historial vive en MongoDB)
-  useEffect(() => {
-    if (!user || !user.demo) return;
-    writeConvos(user.userId, conversations);
-  }, [conversations, user]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -113,24 +120,34 @@ export default function ChatPage() {
 
   const handleNew = async () => {
     if (!user) return;
-    const c = await createConversation(user);
-    setConversations((prev) => [c, ...prev]);
-    setActiveId(c.id);
-    setSidebarOpen(false);
-    setInput("");
+    try {
+      const c = await createConversation(user);
+      setConversations((prev) => [c, ...prev]);
+      setActiveId(c.id);
+      setSidebarOpen(false);
+      setInput("");
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
   };
 
   const handleDelete = async (id: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (!user) return;
-    await deleteConversation(user, id);
-    setConversations((prev) => {
-      const next = prev.filter((c) => c.id !== id);
-      if (activeId === id) setActiveId(next[0]?.id ?? null);
-      return next;
-    });
-    toast.success("Conversación eliminada");
+    try {
+      await deleteConversation(user, id);
+      setConversations((prev) => {
+        const next = prev.filter((c) => c.id !== id);
+        if (activeId === id) setActiveId(next[0]?.id ?? null);
+        return next;
+      });
+      toast.success("Conversación eliminada");
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
   };
+
+  const retryConnection = () => loadAll(true);
 
   const typewriter = (convoId: string, msgId: string, full: string, meta: Partial<ChatMessage>) => {
     const words = full.split(/(\s+)/);
@@ -348,19 +365,28 @@ export default function ChatPage() {
             <div className="border-t border-[var(--border)] p-3">
               <div
                 className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs ${
-                  apiOnline
+                  health?.ok
                     ? "border-[var(--brand)]/30 bg-[var(--brand-tint)] text-[var(--brand-text)]"
-                    : "border-[var(--border)] bg-[var(--surface)] text-[var(--text-3)]"
+                    : "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-400"
                 }`}
               >
-                {apiOnline ? <Wifi size={14} className="shrink-0" /> : <WifiOff size={14} className="shrink-0" />}
-                <span>
-                  {apiOnline === null
+                {health?.ok ? <Wifi size={14} className="shrink-0" /> : <WifiOff size={14} className="shrink-0" />}
+                <span className="flex-1">
+                  {health === null
                     ? "Verificando conexión…"
-                    : apiOnline
-                    ? "API conectada · GPT-5-mini + MongoDB"
-                    : "Sin API conectada · historial en este dispositivo"}
+                    : health.ok
+                    ? "Conectado · GPT-5-mini + MongoDB"
+                    : "Sin conexión con el servidor"}
                 </span>
+                {!health?.ok && health !== null && (
+                  <button
+                    onClick={retryConnection}
+                    aria-label="Reintentar conexión"
+                    className="rounded-md p-1 transition-colors hover:bg-red-500/10"
+                  >
+                    <RefreshCw size={13} className={loadingHistory ? "animate-spin" : ""} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -373,6 +399,25 @@ export default function ChatPage() {
             {loadingHistory ? (
               <div className="flex h-full items-center justify-center gap-2 text-[var(--text-3)]">
                 <Loader2 size={18} className="animate-spin" /> Preparando tu espacio de estudio…
+              </div>
+            ) : health && !health.ok ? (
+              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+                <span className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10 text-red-500">
+                  <AlertTriangle size={26} />
+                </span>
+                <h1 className="font-display mt-5 text-xl font-semibold tracking-tight sm:text-2xl">
+                  MIMIR no está en línea ahora mismo
+                </h1>
+                <p className="mt-2 max-w-md text-sm text-[var(--text-2)]">
+                  No se pudo conectar con el servidor, donde viven tu cuenta, tu historial y la IA.
+                  {health.mongoError ? ` Detalle: ${health.mongoError}` : ""}
+                </p>
+                <button
+                  onClick={retryConnection}
+                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
+                >
+                  <RefreshCw size={15} className={loadingHistory ? "animate-spin" : ""} /> Reintentar conexión
+                </button>
               </div>
             ) : !active || active.messages.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center px-6 text-center">
@@ -511,7 +556,6 @@ export default function ChatPage() {
             </form>
             <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
               MIMIR puede cometer errores: verifica siempre las fuentes citadas.
-              {user?.demo && " Estás viendo respuestas simuladas: conecta MongoDB y OpenAI en Vercel para respuestas reales de la IA."}
             </p>
           </div>
         </main>

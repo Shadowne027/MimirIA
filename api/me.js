@@ -1,7 +1,8 @@
-import { authUser, send, displayId } from "./_lib.js";
+import { authUser, send, displayId, preflight } from "./_lib.js";
 
 /** GET /api/me — valida el token y devuelve el usuario actual. */
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   if (req.method !== "GET") return send(res, 405, { error: "Método no permitido" });
   try {
     const user = await authUser(req);

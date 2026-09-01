@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
-import { getDb, hashPassword, signToken, send, readBody, displayId, nextUserId, mongoHint } from "./_lib.js";
+import { getDb, hashPassword, signToken, send, readBody, displayId, nextUserId, mongoHint, preflight } from "./_lib.js";
 
 /**
  * POST /api/register  { username, password }
  * Crea el usuario en MongoDB y le asigna un ID correlativo (#001, #002…).
  */
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
   try {
     const { username, password } = await readBody(req);

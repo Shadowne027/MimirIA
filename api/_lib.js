@@ -72,6 +72,17 @@ export function send(res, status, body) {
   res.status(status).json(body);
 }
 
+/**
+ * Responde el preflight CORS (OPTIONS) con 204.
+ * Las cabeceras Access-Control-* las añade vercel.json a todas las respuestas.
+ * Devuelve true si ya se respondió (para que el handler haga `return`).
+ */
+export function preflight(req, res) {
+  if (req.method !== "OPTIONS") return false;
+  res.status(204).end();
+  return true;
+}
+
 export function readBody(req) {
   return new Promise((resolve) => {
     let data = "";

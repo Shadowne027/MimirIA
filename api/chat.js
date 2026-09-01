@@ -1,5 +1,5 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, readBody, send, SYSTEM_PROMPT } from "./_lib.js";
+import { getDb, authUser, readBody, send, SYSTEM_PROMPT, preflight } from "./_lib.js";
 
 /**
  * POST /api/chat  { conversationId, message }
@@ -27,6 +27,7 @@ function extractJson(raw) {
 }
 
 export default async function handler(req, res) {
+  if (preflight(req, res)) return;
   if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
   try {
     const user = await authUser(req);
