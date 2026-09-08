@@ -7,7 +7,7 @@ La app está lista para subir a Vercel tal como está:
   - `api/register.js` — crea la cuenta y asigna el **ID correlativo en MongoDB** (`#001`, `#002`, …).
   - `api/login.js` / `api/me.js` — sesión con token firmado.
   - `api/conversations.js` — historial de conversaciones por usuario (MongoDB).
-  - `api/chat.js` — responde con **Gemini 2.0 Flash** (Google, gratuito) usando el historial como contexto y guarda cada mensaje.
+  - `api/chat.js` — responde con **Gemini 3.6 Flash** (Google, gratuito) usando el historial como contexto y guarda cada mensaje.
 
 ## 1. MongoDB Atlas
 
@@ -77,7 +77,7 @@ api/                ← funciones serverless (Node 20)
   login.js          ← POST  /api/login
   me.js             ← GET   /api/me
   conversations.js  ← GET/POST/DELETE /api/conversations
-  chat.js           ← POST  /api/chat       → Gemini 2.0 Flash + historial
+  chat.js           ← POST  /api/chat       → Gemini 3.6 Flash + historial
 src/lib/api.ts      ← cliente del frontend (API real con caída a modo demo)
 vercel.json         ← SPA rewrites + configuración de funciones
 ```
