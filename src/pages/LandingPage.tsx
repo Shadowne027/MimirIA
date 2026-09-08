@@ -477,6 +477,7 @@ function AboutMimiria() {
             <ul className="space-y-2 text-sm leading-relaxed text-[var(--text-2)]">
               <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Explica conceptos paso a paso con ejemplos</li>
               <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Busca información con fuentes verificadas</li>
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Analiza imágenes y PDFs (ejercicios, diagramas, documentos)</li>
               <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Diseña rutas de estudio personalizadas</li>
               <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Guarda tu historial de conversaciones</li>
               <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Disponible 24/7 desde cualquier dispositivo</li>
@@ -507,7 +508,7 @@ function AboutMimiria() {
               </p>
             </div>
             <a href="#faq">
-              <Button className="h-11 gap-2 whitespace-nowrap rounded-full bg-white px-6 font-medium text-[var(--brand-text)] hover:bg-white/90">
+              <Button className="h-11 gap-2 whitespace-nowrap rounded-full bg-white px-6 font-medium text-[var(--brand)] hover:bg-white/90">
                 Ver preguntas frecuentes <ArrowRight size={16} />
               </Button>
             </a>

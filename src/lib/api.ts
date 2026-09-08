@@ -1,7 +1,7 @@
 /**
  * Cliente de API de MIMIR IA — 100% en la nube.
  * Todo (cuentas, historial y respuestas de la IA) vive en el servidor:
- * MongoDB para datos y GPT-5-mini (OpenAI) para las respuestas.
+ * MongoDB para datos y Gemini 3.6 Flash (Google) para las respuestas.
  * Si el servidor no responde, la app NO simula nada: muestra el error real.
  */
 
@@ -19,6 +19,7 @@ export interface ChatMessage {
   followUps?: string[];
   at: number;
   id?: string; // marcador temporal para la animación de escritura
+  files?: { name: string; type: string }[]; // archivos adjuntos
 }
 
 export interface Conversation {
@@ -34,8 +35,8 @@ export interface HealthStatus {
   ok: boolean; // ¿todo está bien configurado?
   mongo: boolean;
   mongoError?: string | null;
-  openai: boolean;
-  openaiError?: string | null;
+  gemini: boolean;
+  geminiError?: string | null;
   build?: string;
 }
 
@@ -75,34 +76,32 @@ export async function getHealth(force = false): Promise<HealthStatus> {
           ok: !!data.ok,
           mongo: !!data.mongo,
           mongoError: data.mongoError ?? null,
-          openai: !!data.openai,
-          openaiError: data.openaiError ?? null,
+          gemini: !!data.gemini,
+          geminiError: data.geminiError ?? null,
           build: data.build,
         };
         healthCache = status;
         return status;
       }
       // Respuesta no-JSON: no hay funciones serverless desplegadas
-      healthCache = {
+      return {
         reachable: false,
         ok: false,
         mongo: false,
         mongoError: "El servidor no tiene las funciones /api desplegadas. Sube la carpeta api/ a tu repositorio y haz Redeploy en Vercel.",
-        openai: false,
+        gemini: false,
       };
-      return healthCache;
     } catch {
       if (attempt === 0) await sleep(800);
     }
   }
-  healthCache = {
+  return {
     reachable: false,
     ok: false,
     mongo: false,
     mongoError: "No se pudo contactar al servidor de MIMIR. Revisa tu conexión a internet e inténtalo de nuevo.",
-    openai: false,
+    gemini: false,
   };
-  return healthCache;
 }
 
 async function requireServer(): Promise<void> {
@@ -110,7 +109,7 @@ async function requireServer(): Promise<void> {
   if (!h.ok) {
     throw new Error(
       h.reachable
-        ? `MIMIR no está en línea: ${h.mongoError || h.openaiError || "el servidor reporta un problema de configuración."}`
+        ? `MIMIR no está en línea: ${h.mongoError || h.geminiError || "el servidor reporta un problema de configuración."}`
         : h.mongoError || "No se pudo contactar al servidor de MIMIR."
     );
   }
@@ -224,7 +223,7 @@ export async function deleteConversation(user: AuthUser, id: string): Promise<vo
   if (!res.ok) throw new Error(data?.error || "No se pudo eliminar la conversación.");
 }
 
-/* ---------------- Chat (GPT-5-mini) ---------------- */
+/* ---------------- Chat (Gemini 3.6 Flash) ---------------- */
 export interface ChatReply {
   text: string;
   sources?: { label: string; url: string }[];
@@ -234,14 +233,37 @@ export interface ChatReply {
 export async function sendMessage(
   user: AuthUser,
   conversationId: string,
-  message: string
+  message: string,
+  files?: File[]
 ): Promise<ChatReply> {
   await requireServer();
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: authHeaders(user.token),
-    body: JSON.stringify({ conversationId, message }),
-  });
+  
+  let res: Response;
+  
+  if (files && files.length > 0) {
+    // Enviar con archivos (multipart/form-data)
+    const formData = new FormData();
+    formData.append("conversationId", conversationId);
+    formData.append("message", message);
+    files.forEach((file) => formData.append("files", file));
+    
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${user.token}`,
+        // No poner Content-Type, el navegador lo hace automáticamente con el boundary
+      },
+      body: formData,
+    });
+  } else {
+    // Enviar solo texto (JSON)
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify({ conversationId, message }),
+    });
+  }
+  
   const data = await parseApiResponse(res);
   if (res.ok && data?.text) {
     return {
@@ -250,5 +272,15 @@ export async function sendMessage(
       followUps: Array.isArray(data.followups) ? data.followups : undefined,
     };
   }
-  throw new Error(data?.error || "La IA no respondió. Intenta de nuevo en unos segundos.");
+  
+  // Mensajes más amigables para errores comunes
+  const errMsg = data?.error || "";
+  if (/high demand|temporarily unavailable/i.test(errMsg)) {
+    throw new Error("La IA está muy ocupada en este momento. Por favor intenta de nuevo en unos segundos.");
+  }
+  if (/quota|rate limit/i.test(errMsg)) {
+    throw new Error("Se alcanzó el límite de uso. Espera un momento e intenta de nuevo.");
+  }
+  
+  throw new Error(errMsg || "La IA no respondió. Intenta de nuevo en unos segundos.");
 }

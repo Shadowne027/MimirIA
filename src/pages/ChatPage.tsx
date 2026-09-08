@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   Compass, ExternalLink, Globe, Loader2, LogOut, Menu,
   Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff, RefreshCw, AlertTriangle,
+  Paperclip, Image as ImageIcon, FileText,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
@@ -55,6 +56,9 @@ export default function ChatPage() {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [filePreviews, setFilePreviews] = useState<{ name: string; url: string; type: string }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamTimer = useRef<number | null>(null);
@@ -149,6 +153,70 @@ export default function ChatPage() {
 
   const retryConnection = () => loadAll(true);
 
+  // ================= Manejo de archivos =================
+  const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+  const MAX_FILES = 5;
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Validar cantidad
+    if (attachedFiles.length + files.length > MAX_FILES) {
+      toast.error(`Máximo ${MAX_FILES} archivos por mensaje`);
+      return;
+    }
+
+    const validFiles: File[] = [];
+    const previews: typeof filePreviews = [];
+
+    for (const file of files) {
+      // Validar tipo
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        toast.error(`Tipo no permitido: ${file.name}. Solo imágenes y PDFs.`);
+        continue;
+      }
+      // Validar tamaño
+      if (file.size > MAX_FILE_SIZE) {
+        toast.error(`Archivo muy grande: ${file.name} (máx. 20MB)`);
+        continue;
+      }
+      validFiles.push(file);
+      
+      // Crear preview para imágenes
+      if (file.type.startsWith("image/")) {
+        const url = URL.createObjectURL(file);
+        previews.push({ name: file.name, url, type: file.type });
+      } else {
+        previews.push({ name: file.name, url: "", type: file.type });
+      }
+    }
+
+    setAttachedFiles((prev) => [...prev, ...validFiles]);
+    setFilePreviews((prev) => [...prev, ...previews]);
+    
+    // Limpiar el input para poder seleccionar el mismo archivo de nuevo
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeFile = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+    setFilePreviews((prev) => {
+      const file = prev[index];
+      if (file?.url) URL.revokeObjectURL(file.url);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const clearAllFiles = () => {
+    filePreviews.forEach((f) => {
+      if (f.url) URL.revokeObjectURL(f.url);
+    });
+    setAttachedFiles([]);
+    setFilePreviews([]);
+  };
+
   const typewriter = (convoId: string, msgId: string, full: string, meta: Partial<ChatMessage>) => {
     const words = full.split(/(\s+)/);
     let i = 0;
@@ -179,8 +247,13 @@ export default function ChatPage() {
 
   const handleSend = async (raw?: string) => {
     const text = (raw ?? input).trim();
-    if (!text || thinking || !user) return;
+    const files = attachedFiles;
+    
+    // Permitir enviar solo con archivos (sin texto)
+    if ((!text && files.length === 0) || thinking || !user) return;
+    
     setInput("");
+    clearAllFiles();
 
     let convoId = activeId;
     if (!convoId) {
@@ -191,11 +264,27 @@ export default function ChatPage() {
     }
     const targetId = convoId;
 
-    const userMsg: ChatMessage = { role: "user", content: text, at: Date.now() };
+    // Construir contenido del mensaje del usuario
+    let userContent = text;
+    if (!text && files.length > 0) {
+      userContent = files.length === 1 
+        ? `📎 ${files[0].name}` 
+        : `📎 ${files.length} archivos adjuntos`;
+    }
+
+    const userMsg: ChatMessage = { 
+      role: "user", 
+      content: userContent, 
+      at: Date.now(),
+      files: files.map(f => ({ name: f.name, type: f.type })),
+    };
+    
     const asstId = uid();
     patchConvo(targetId, (c) => ({
       ...c,
-      title: c.messages.length === 0 ? text.slice(0, 48) + (text.length > 48 ? "…" : "") : c.title,
+      title: c.messages.length === 0 
+        ? (text || "Análisis de archivo").slice(0, 48) + ((text || "Análisis de archivo").length > 48 ? "…" : "") 
+        : c.title,
       updatedAt: Date.now(),
       messages: [...c.messages, userMsg, { role: "assistant", content: "", at: Date.now() } as ChatMessage],
     }));
@@ -212,7 +301,7 @@ export default function ChatPage() {
 
     setThinking(true);
     try {
-      const reply = await sendMessage(user, targetId, text);
+      const reply = await sendMessage(user, targetId, text, files.length > 0 ? files : undefined);
       setThinking(false);
       typewriter(targetId, asstId, reply.text, {
         sources: reply.sources,
@@ -453,8 +542,33 @@ export default function ChatPage() {
                 {active.messages.map((m, i) =>
                   m.role === "user" ? (
                     <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-2.5 text-sm text-white">
-                        {m.content}
+                      <div className="max-w-[85%] space-y-2">
+                        {/* Mostrar archivos adjuntos */}
+                        {m.files && m.files.length > 0 && (
+                          <div className="flex flex-wrap justify-end gap-2">
+                            {m.files.map((file, j) => (
+                              <div key={j} className="overflow-hidden rounded-lg border border-[var(--brand)]/30 bg-[var(--brand)]/10">
+                                {file.type.startsWith("image/") ? (
+                                  <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-white/80">
+                                    <ImageIcon size={12} />
+                                    <span className="max-w-[120px] truncate">{file.name}</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-white/80">
+                                    <FileText size={12} />
+                                    <span className="max-w-[120px] truncate">{file.name}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Mostrar texto del mensaje */}
+                        {m.content && !m.content.startsWith("📎") && (
+                          <div className="rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-2.5 text-sm text-white">
+                            {m.content}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -530,6 +644,67 @@ export default function ChatPage() {
 
           {/* ===== Input ===== */}
           <div className="relative border-t border-[var(--border)] bg-[var(--bg)]/90 p-3 backdrop-blur md:p-4">
+            {/* Input file oculto */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+            
+            {/* Preview de archivos adjuntos */}
+            {filePreviews.length > 0 && (
+              <div className="mx-auto mb-2 max-w-3xl">
+                <div className="flex flex-wrap gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                  {filePreviews.map((file, i) => (
+                    <div key={i} className="group relative">
+                      {file.url ? (
+                        // Preview de imagen
+                        <div className="relative h-16 w-16 overflow-hidden rounded-lg border border-[var(--border-soft)]">
+                          <img src={file.url} alt={file.name} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => removeFile(i)}
+                            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ) : (
+                        // Preview de PDF
+                        <div className="relative flex h-16 w-16 flex-col items-center justify-center rounded-lg border border-[var(--border-soft)] bg-[var(--bg-soft)]">
+                          <FileText size={20} className="text-[var(--brand-text)]" />
+                          <span className="mt-0.5 text-[8px] font-medium text-[var(--text-3)]">PDF</span>
+                          <button
+                            type="button"
+                            onClick={() => removeFile(i)}
+                            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      )}
+                      <p className="mt-1 max-w-[64px] truncate text-[9px] text-[var(--text-3)]" title={file.name}>
+                        {file.name}
+                      </p>
+                    </div>
+                  ))}
+                  {filePreviews.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={clearAllFiles}
+                      className="flex h-16 w-16 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-[10px] text-[var(--text-3)] transition-colors hover:border-red-400 hover:text-red-400"
+                    >
+                      <X size={14} />
+                      Quitar todo
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -537,16 +712,28 @@ export default function ChatPage() {
               }}
               className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
             >
+              {/* Botón adjuntar archivo */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy || filePreviews.length >= 5}
+                aria-label="Adjuntar archivo"
+                title="Adjuntar imagen o PDF (máx. 20MB)"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)] disabled:opacity-40"
+              >
+                <Paperclip size={18} />
+              </button>
+              
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"
+                placeholder="Escribe tu pregunta… o adjunta una imagen"
                 data-testid="chat-input"
-                className="h-10 min-w-0 flex-1 bg-transparent px-4 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
+                className="h-10 min-w-0 flex-1 bg-transparent px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
               />
               <button
                 type="submit"
-                disabled={busy || !input.trim()}
+                disabled={busy || (!input.trim() && attachedFiles.length === 0)}
                 data-testid="chat-send"
                 aria-label="Enviar"
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white transition-all hover:bg-[var(--brand-hover)] active:scale-90 disabled:opacity-40"
@@ -555,7 +742,7 @@ export default function ChatPage() {
               </button>
             </form>
             <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
-              MIMIR puede cometer errores: verifica siempre las fuentes citadas.
+              MIMIR puede analizar imágenes y PDFs • Máx. 20MB por archivo • Hasta 5 archivos
             </p>
           </div>
         </main>
