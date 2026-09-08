@@ -708,8 +708,8 @@ function InstitutionSection() {
           <h2 className="font-display text-3xl font-semibold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
             Un proyecto del SENA, hecho desde Cúcuta para el mundo.
           </h2>
-          <div className="relative mt-8 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-3xl bg-black p-6">
-            <img src={SCHOOL_IMG} alt="Institución Educativa Gonzalo Rivera Laguado" className="max-h-full max-w-full object-contain" />
+          <div className="relative mt-8 aspect-[4/3] overflow-hidden rounded-3xl bg-black">
+            <img src={SCHOOL_IMG} alt="Institución Educativa Gonzalo Rivera Laguado" className="h-full w-full object-cover" />
           </div>
           <div className="mt-4">
             <div className="font-display text-xl font-semibold">Institución Educativa Gonzalo Rivera Laguado</div>
