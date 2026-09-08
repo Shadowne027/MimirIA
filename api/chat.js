@@ -4,11 +4,11 @@ import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_li
 /**
  * POST /api/chat  { conversationId, message }
  * 1. Carga el historial del usuario desde MongoDB.
- * 2. Consulta Gemini 3.6 Flash (Google) con contexto de la conversación.
+ * 2. Consulta GPT-5-mini (OpenAI) con contexto de la conversación.
  * 3. Guarda ambos mensajes en MongoDB (historial persistente por usuario).
  *
- * Gemini es gratuito con límites generosos (1M tokens/día).
- * Incluye retry automático si el modelo está saturado.
+ * Nota: los modelos GPT-5 NO aceptan el parámetro `response_format`,
+ * por eso se pide el JSON en el prompt y se extrae de forma defensiva.
  */
 
 /**
@@ -95,36 +95,34 @@ function extractFieldsFallback(raw) {
 }
 
 /**
- * Llama a Gemini con retry automático si está saturado.
+ * Llama a OpenAI GPT-5-mini con retry automático si está saturado.
  */
-async function callGemini(contents, maxRetries = 2) {
+async function callOpenAI(messages, maxRetries = 2) {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const aiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 2048,
-          },
-        }),
-      }
-    );
+    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-5-mini",
+        messages,
+        temperature: 0.7,
+        max_tokens: 2048,
+      }),
+    });
 
     if (aiRes.ok) {
       return await aiRes.json();
     }
 
-    // Si es error de alta demanda, reintentar
+    // Si es error de alta demanda o rate limit, reintentar
     const errBody = await aiRes.json().catch(() => ({}));
     const errMsg = errBody?.error?.message || "";
 
     if (
-      (aiRes.status === 503 || /high demand|temporarily unavailable/i.test(errMsg)) &&
+      (aiRes.status === 429 || aiRes.status === 503 || /rate limit|high demand|temporarily unavailable/i.test(errMsg)) &&
       attempt < maxRetries
     ) {
       // Esperar 2, 4 segundos entre reintentos
@@ -133,7 +131,7 @@ async function callGemini(contents, maxRetries = 2) {
     }
 
     // Otro error, lanzar
-    throw new Error(errMsg || `Gemini respondió ${aiRes.status}`);
+    throw new Error(errMsg || `OpenAI respondió ${aiRes.status}`);
   }
 }
 
@@ -164,24 +162,22 @@ export default async function handler(req, res) {
       .slice(-16)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    // Convertir historial al formato de Gemini
-    const geminiContents = [
-      ...history.map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
-      })),
-      { role: "user", parts: [{ text }] },
+    // Convertir historial al formato de OpenAI
+    const openaiMessages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      ...history,
+      { role: "user", content: text },
     ];
 
     let ai;
     try {
-      ai = await callGemini(geminiContents);
+      ai = await callOpenAI(openaiMessages);
     } catch (e) {
       const detail = e?.message || "Error desconocido";
       return send(res, 502, { error: `La IA respondió un error: ${detail}` });
     }
 
-    const raw = ai.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const raw = ai.choices?.[0]?.message?.content || "";
 
     // Intentar parsear JSON, si falla usar fallback regex
     let parsed = extractJson(raw);
