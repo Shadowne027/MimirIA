@@ -1,4 +1,4 @@
-# MIMIR IA — Despliegue en Vercel (MongoDB + GPT-5-mini)
+# MIMIR IA — Despliegue en Vercel (MongoDB + Gemini)
 
 La app está lista para subir a Vercel tal como está:
 
@@ -7,9 +7,7 @@ La app está lista para subir a Vercel tal como está:
   - `api/register.js` — crea la cuenta y asigna el **ID correlativo en MongoDB** (`#001`, `#002`, …).
   - `api/login.js` / `api/me.js` — sesión con token firmado.
   - `api/conversations.js` — historial de conversaciones por usuario (MongoDB).
-  - `api/chat.js` — responde con **GPT-5-mini** (OpenAI) usando el historial como contexto y guarda cada mensaje.
-- **Modo demo:** si el backend no está configurado, la app lo detecta (`/api/health`) y funciona con
-  almacenamiento local y respuestas simuladas, asignando IDs `#001…` igual que el servidor.
+  - `api/chat.js` — responde con **Gemini 2.0 Flash** (Google, gratuito) usando el historial como contexto y guarda cada mensaje.
 
 ## 1. MongoDB Atlas
 
@@ -22,10 +20,11 @@ La app está lista para subir a Vercel tal como está:
 La base `mimiria` y las colecciones (`users`, `conversations`, `counters`) se crean solas al primer uso.
 El contador de IDs vive en `counters` → cada registro nuevo recibe el siguiente número (`#001`, `#002`, …).
 
-## 2. OpenAI (GPT-5-mini)
+## 2. Google Gemini (gratuito)
 
-1. Entra a [platform.openai.com/api-keys](https://platform.openai.com/api-keys) y crea una API key.
-2. Verifica que tu cuenta tenga acceso al modelo `gpt-5-mini`.
+1. Entra a [Google AI Studio](https://aistudio.google.com/apikey) e inicia sesión con tu cuenta de Google.
+2. Haz clic en **"Create API key"** y cópiala.
+3. Gemini 2.0 Flash es **gratuito** con límites generosos (1 millón de tokens/día, 15 requests/minuto).
 
 ## 3. Vercel
 
@@ -34,18 +33,18 @@ El contador de IDs vive en `counters` → cada registro nuevo recibe el siguient
 3. Framework: **Vite** (se detecta solo). No cambies el build command.
 4. En **Settings → Environment Variables** agrega las tres variables (ver `.env.example`):
    - `MONGODB_URI`
-   - `OPENAI_API_KEY`
+   - `GEMINI_API_KEY`
    - `TOKEN_SECRET` (genera uno largo y aleatorio)
 5. **Deploy**. Listo: `https://tu-proyecto.vercel.app`.
 
 ## 4. Comprobación
 
 - **El paso clave:** abre en el navegador `https://tu-sitio.vercel.app/api/health`.
-  - `{"ok": true, "mongo": true, "openai": true}` → todo conectado.
+  - `{"ok": true, "mongo": true, "gemini": true}` → todo conectado.
   - Si `mongo: false` → el JSON te dice el motivo exacto (lee `mongoError`).
-  - Si `openai: false` → revisa `openaiError` (clave inválida, sin saldo, etc.).
+  - Si `gemini: false` → revisa `geminiError` (clave inválida, etc.).
 - Abre la app y crea una cuenta: el toast te muestra tu ID (`#001`).
-- En el chat, el panel lateral debe decir **“API conectada · GPT-5-mini + MongoDB”**.
+- En el chat, el panel lateral debe decir **“Conectado · Gemini + MongoDB”**.
 - En Atlas verás los documentos en `users` y `conversations`, vinculados por `userId`.
 
 ## 5. Si algo falla (solución de problemas)
@@ -61,11 +60,11 @@ El contador de IDs vive en `counters` → cada registro nuevo recibe el siguient
    de `MONGODB_URI` están mal. Si la contraseña tiene caracteres como `@`, `:`, `/`,
    debes codificarlos (`@` → `%40`). Ejemplo correcto:
    `mongodb+srv://juan:mi%40clave@cluster0.ab12c.mongodb.net/?retryWrites=true&w=majority`
-5. **La IA responde un error de OpenAI** → el chat ahora muestra el mensaje exacto:
-   - `401 Incorrect API key` → la clave está mal copiada (sobran espacios, falta un trozo).
-   - `429 / quota` → la cuenta de OpenAI no tiene saldo o excedió el límite.
-   - `model_not_found` → tu cuenta aún no tiene acceso a `gpt-5-mini`.
-6. **Los nombres de las variables deben ser exactos:** `MONGODB_URI`, `OPENAI_API_KEY`,
+5. **La IA responde un error de Gemini** → el chat ahora muestra el mensaje exacto:
+   - `400 API key not valid` → la clave está mal copiada (sobran espacios, falta un trozo).
+   - `429 quota exceeded` → excediste el límite de requests (15/minuto, 1M tokens/día).
+   - `model not found` → revisa que la variable `GEMINI_API_KEY` esté bien escrita.
+6. **Los nombres de las variables deben ser exactos:** `MONGODB_URI`, `GEMINI_API_KEY`,
    `TOKEN_SECRET` — sin espacios antes/después de la `=` ni de los valores.
 
 ## Estructura relevante
@@ -78,7 +77,7 @@ api/                ← funciones serverless (Node 20)
   login.js          ← POST  /api/login
   me.js             ← GET   /api/me
   conversations.js  ← GET/POST/DELETE /api/conversations
-  chat.js           ← POST  /api/chat       → GPT-5-mini + historial
+  chat.js           ← POST  /api/chat       → Gemini 2.0 Flash + historial
 src/lib/api.ts      ← cliente del frontend (API real con caída a modo demo)
 vercel.json         ← SPA rewrites + configuración de funciones
 ```

@@ -375,7 +375,7 @@ export default function ChatPage() {
                   {health === null
                     ? "Verificando conexión…"
                     : health.ok
-                    ? "Conectado · GPT-5-mini + MongoDB"
+                    ? "Conectado · Gemini + MongoDB"
                     : "Sin conexión con el servidor"}
                 </span>
                 {!health?.ok && health !== null && (
