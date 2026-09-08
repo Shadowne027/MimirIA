@@ -384,7 +384,7 @@ function Features({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => voi
             <Button
               onClick={handleCta}
               data-testid="features-cta-button"
-              className="h-11 gap-2 whitespace-nowrap rounded-full bg-[var(--bg)] px-6 font-medium text-[var(--brand-text)] hover:bg-white"
+              className="h-11 gap-2 whitespace-nowrap rounded-full bg-[var(--bg)] px-6 font-medium text-[var(--brand-text)] hover:bg-[var(--bg-soft)] hover:shadow-lg transition-all"
             >
               Empezar ahora <ArrowRight size={16} />
             </Button>
