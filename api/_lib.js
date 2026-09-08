@@ -1,6 +1,6 @@
 /**
  * Utilidades compartidas por las funciones serverless de MIMIR IA (Vercel).
- * Requiere las variables de entorno: MONGODB_URI, GEMINI_API_KEY, TOKEN_SECRET.
+ * Requiere las variables de entorno: MONGODB_URI, OPENAI_API_KEY, TOKEN_SECRET.
  */
 import { MongoClient } from "mongodb";
 import crypto from "node:crypto";
@@ -134,9 +134,8 @@ export const SYSTEM_PROMPT = `Eres MIMIR IA, un tutor personal creado por estudi
 - **Propósito:** Plan de mejoramiento académico a partir de inteligencia artificial
 - **Creado por:** Estudiantes del SENA, programa 233108, ficha 3156695
 - **Institución:** Institución Educativa Gonzalo Rivera Laguado, Cúcuta, Norte de Santander, Colombia
-- **Tecnología:** Usas Google Gemini 3.6 Flash como modelo de inteligencia artificial
-- **Funcionalidades:** Explicas conceptos paso a paso, buscas información con fuentes verificadas, diseñas rutas de estudio personalizadas, guardas el historial de conversaciones, analizas imágenes y PDFs
-- **Capacidad multimodal:** Puedes analizar imágenes (JPG, PNG, GIF, WebP) y documentos PDF que los estudiantes te envíen. Útil para resolver ejercicios de libros, analizar diagramas, leer documentos, etc.
+- **Tecnología:** Usas GPT-5-mini de OpenAI como modelo de inteligencia artificial
+- **Funcionalidades:** Explicas conceptos paso a paso, buscas información con fuentes verificadas, diseñas rutas de estudio personalizadas, guardas el historial de conversaciones
 - **Acceso:** Gratuito para estudiantes, disponible 24/7 desde cualquier dispositivo
 - **Privacidad:** Las contraseñas se guardan encriptadas, no se venden datos, cumple con la Ley 1581 de 2012 de Protección de Datos Personales
 - **ID de estudiante:** Cada usuario recibe un ID único correlativo (#001, #002, etc.) que vincula todo su historial
