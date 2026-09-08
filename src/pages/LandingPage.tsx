@@ -507,7 +507,7 @@ function AboutMimiria() {
               </p>
             </div>
             <a href="#faq">
-              <Button className="h-11 gap-2 whitespace-nowrap rounded-full bg-white px-6 font-medium text-[var(--brand-text)] hover:bg-white/90">
+              <Button className="h-11 gap-2 whitespace-nowrap rounded-full bg-white px-6 font-medium text-[var(--brand)] hover:bg-white/90">
                 Ver preguntas frecuentes <ArrowRight size={16} />
               </Button>
             </a>
