@@ -4,11 +4,10 @@ import { getDb, authUser, readBody, send, SYSTEM_PROMPT, preflight } from "./_li
 /**
  * POST /api/chat  { conversationId, message }
  * 1. Carga el historial del usuario desde MongoDB.
- * 2. Consulta GPT-5-mini (OpenAI) con contexto de la conversación.
+ * 2. Consulta Gemini 2.0 Flash (Google) con contexto de la conversación.
  * 3. Guarda ambos mensajes en MongoDB (historial persistente por usuario).
  *
- * Nota: los modelos GPT-5 NO aceptan el parámetro `response_format`,
- * por eso se pide el JSON en el prompt y se extrae de forma defensiva.
+ * Gemini es gratuito con límites generosos (1M tokens/día).
  */
 
 function extractJson(raw) {
@@ -52,29 +51,38 @@ export default async function handler(req, res) {
       .slice(-16)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // Convertir historial al formato de Gemini
+    const geminiContents = [
+      ...history.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      })),
+      { role: "user", parts: [{ text }] },
+    ];
+
     let aiRes;
     try {
-      aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-5-mini",
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...history,
-            { role: "user", content: text },
-          ],
-        }),
-      });
+      aiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: geminiContents,
+            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048,
+            },
+          }),
+        }
+      );
     } catch {
-      return send(res, 502, { error: "No se pudo contactar a OpenAI. Revisa tu conexión o intenta de nuevo." });
+      return send(res, 502, { error: "No se pudo contactar a Gemini. Revisa tu conexión o intenta de nuevo." });
     }
 
     if (!aiRes.ok) {
-      let detail = `OpenAI respondió ${aiRes.status}`;
+      let detail = `Gemini respondió ${aiRes.status}`;
       try {
         const errBody = await aiRes.json();
         if (errBody?.error?.message) detail = errBody.error.message;
@@ -85,7 +93,7 @@ export default async function handler(req, res) {
     }
 
     const ai = await aiRes.json();
-    const raw = ai.choices?.[0]?.message?.content || "";
+    const raw = ai.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const parsed = extractJson(raw) || {};
 
     const replyText = String(parsed.text || raw || "No logré formular una respuesta. ¿Puedes reformular tu pregunta?");

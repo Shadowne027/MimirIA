@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Sparkles, BookOpen, Compass, Brain, Clock, Globe, ArrowRight,
-  Send, GraduationCap, School, Lightbulb,
+  Send, GraduationCap, School, Lightbulb, Shield,
   Quote, CheckCircle2, Menu, X, ChevronLeft, ChevronRight, Award, LogIn, UserPlus,
   MessageCircle,
 } from "lucide-react";
@@ -30,6 +30,7 @@ function Navbar({ onOpenAuth }: { onOpenAuth: (m: "login" | "register") => void 
   const links = [
     { href: "#caracteristicas", label: "Características" },
     { href: "#como-funciona", label: "Cómo funciona" },
+    { href: "#sobre-mimiria", label: "Sobre MIMIRIA" },
     { href: "#institucion", label: "Institución" },
     { href: "#faq", label: "FAQ" },
   ];
@@ -426,6 +427,97 @@ function HowItWorks() {
   );
 }
 
+// ====== SOBRE MIMIRIA ======
+function AboutMimiria() {
+  return (
+    <section id="sobre-mimiria" data-testid="about-mimiria-section" className="border-t border-[var(--border-soft)] bg-[var(--bg-soft)] py-20 md:py-28">
+      <div className="mx-auto max-w-7xl px-6 md:px-12">
+        <div className="mb-14 max-w-3xl">
+          <div className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--brand-text)]">Sobre MIMIRIA</div>
+          <h2 className="font-display text-3xl font-semibold tracking-tight text-[var(--text)] sm:text-4xl lg:text-5xl">
+            ¿Qué es MIMIR IA?
+          </h2>
+          <p className="mt-4 text-base text-[var(--text-2)] sm:text-lg">
+            MIMIR IA (Mente Inteligente para Mejorar el Rendimiento) es un tutor personal impulsado por inteligencia artificial, diseñado específicamente para estudiantes.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand-tint)]">
+                <Brain size={24} className="text-[var(--brand-text)]" />
+              </div>
+              <h3 className="font-display text-xl font-semibold tracking-tight text-[var(--text)]">Tecnología</h3>
+            </div>
+            <p className="text-sm leading-relaxed text-[var(--text-2)]">
+              Utiliza <strong className="font-semibold text-[var(--text)]">Google Gemini 2.0 Flash</strong>, un modelo de inteligencia artificial avanzado que entiende contexto, explica conceptos complejos de forma simple y aprende de tus preguntas para personalizar las respuestas.
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand-tint)]">
+                <School size={24} className="text-[var(--brand-text)]" />
+              </div>
+              <h3 className="font-display text-xl font-semibold tracking-tight text-[var(--text)]">Origen</h3>
+            </div>
+            <p className="text-sm leading-relaxed text-[var(--text-2)]">
+              Creado por estudiantes del <strong className="font-semibold text-[var(--text)]">SENA</strong> (programa 233108, ficha 3156695) como proyecto productivo para la <strong className="font-semibold text-[var(--text)]">Institución Educativa Gonzalo Rivera Laguado</strong> de Cúcuta, Colombia.
+            </p>
+          </div>
+
+          <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand-tint)]">
+                <Globe size={24} className="text-[var(--brand-text)]" />
+              </div>
+              <h3 className="font-display text-xl font-semibold tracking-tight text-[var(--text)]">Funcionalidades</h3>
+            </div>
+            <ul className="space-y-2 text-sm leading-relaxed text-[var(--text-2)]">
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Explica conceptos paso a paso con ejemplos</li>
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Busca información con fuentes verificadas</li>
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Diseña rutas de estudio personalizadas</li>
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Guarda tu historial de conversaciones</li>
+              <li className="flex gap-2"><CheckCircle2 size={16} className="mt-0.5 shrink-0 text-[var(--brand-text)]" /> Disponible 24/7 desde cualquier dispositivo</li>
+            </ul>
+          </div>
+
+          <div className="rounded-3xl border border-[var(--border)] bg-[var(--surface)] p-8">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--brand-tint)]">
+                <Shield size={24} className="text-[var(--brand-text)]" />
+              </div>
+              <h3 className="font-display text-xl font-semibold tracking-tight text-[var(--text)]">Privacidad</h3>
+            </div>
+            <p className="text-sm leading-relaxed text-[var(--text-2)]">
+              Las contraseñas se guardan <strong className="font-semibold text-[var(--text)]">encriptadas</strong>, no se venden datos personales y cumple con la <strong className="font-semibold text-[var(--text)]">Ley 1581 de 2012</strong> de Protección de Datos Personales de Colombia. Tu historial es privado y solo tú puedes acceder a él.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-10 rounded-3xl bg-[var(--brand)] p-8 text-white">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="font-display text-xl font-semibold tracking-tight sm:text-2xl">
+                ¿Tienes preguntas sobre MIMIRIA?
+              </h3>
+              <p className="mt-2 text-sm text-white/80 sm:text-base">
+                Pregúntale directamente a la IA: "¿Qué es MIMIRIA?", "¿Quién te creó?", "¿Cómo funcionas?"
+              </p>
+            </div>
+            <a href="#faq">
+              <Button className="h-11 gap-2 whitespace-nowrap rounded-full bg-white px-6 font-medium text-[var(--brand-text)] hover:bg-white/90">
+                Ver preguntas frecuentes <ArrowRight size={16} />
+              </Button>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ====== TARGET AUDIENCE — CAROUSEL (cíclico, 10s, con reinicio de contador) ======
 const AUDIENCE_CARDS: { icon: LucideIcon; title: string; desc: string; img: string; testid: string }[] = [
   {
@@ -708,8 +800,8 @@ function InstitutionSection() {
           <h2 className="font-display text-3xl font-semibold leading-tight tracking-tight sm:text-4xl lg:text-5xl">
             Un proyecto del SENA, hecho desde Cúcuta para el mundo.
           </h2>
-          <div className="relative mt-8 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-3xl bg-black p-6">
-            <img src={SCHOOL_IMG} alt="Institución Educativa Gonzalo Rivera Laguado" className="max-h-full max-w-full object-contain" />
+          <div className="relative mt-8 aspect-[4/3] overflow-hidden rounded-3xl bg-black">
+            <img src={SCHOOL_IMG} alt="Institución Educativa Gonzalo Rivera Laguado" className="h-full w-full object-cover" />
           </div>
           <div className="mt-4">
             <div className="font-display text-xl font-semibold">Institución Educativa Gonzalo Rivera Laguado</div>
@@ -764,7 +856,7 @@ function FAQ() {
   const faqs = [
     { q: "¿MIMIR IA es realmente gratuito para los estudiantes?", a: "Sí. El proyecto nació en el SENA con vocación de impacto social. La plataforma es de acceso libre para estudiantes de la institución y, en su fase abierta, para cualquier estudiante hispanohablante." },
     { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Al registrarte recibes un ID único (por ejemplo #001) que se guarda en la base de datos y vincula todo tu historial de conversaciones, para que puedas volver a ellas cuando quieras." },
-    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza modelos de inteligencia artificial avanzados (GPT-5-mini) entrenados con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
+    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza Google Gemini 2.0 Flash, un modelo de inteligencia artificial avanzado entrenado con grandes corpus de conocimiento. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
     { q: "¿Reemplaza a un profesor?", a: "No. MIMIR es un complemento: explica conceptos, da ejemplos y propone rutas de estudio. El acompañamiento docente sigue siendo irremplazable. Nuestra meta es reducir su carga repetitiva, no eliminar su rol." },
     { q: "¿Qué tan precisa es la información?", a: "MIMIR puede cometer errores como cualquier IA. Por eso siempre citamos fuentes: para que el estudiante desarrolle pensamiento crítico verificándolas. Esa es justamente la habilidad que queremos fomentar." },
     { q: "¿Mis datos están seguros?", a: "Cumplimos con la Ley 1581 de 2012 de Protección de Datos Personales. No vendemos tus datos. Las contraseñas se guardan encriptadas y las conversaciones se usan únicamente para mejorar tu experiencia." },
@@ -858,6 +950,7 @@ export default function LandingPage() {
         <ChatTeaser onOpenAuth={openAuth} />
         <Features onOpenAuth={openAuth} />
         <HowItWorks />
+        <AboutMimiria />
         <TargetAudienceCarousel onOpenAuth={openAuth} />
         <InstitutionSection />
         <FAQ />
