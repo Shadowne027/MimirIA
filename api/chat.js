@@ -12,7 +12,7 @@ import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_li
  */
 
 /**
- * Extrae JSON de la respuesta de Gemini.
+ * Extrae JSON de la respuesta de OpenAI.
  * Robusto: maneja bloques de código, texto extra, caracteres de control, etc.
  */
 function extractJson(raw) {
