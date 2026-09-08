@@ -28,6 +28,9 @@ export function getDb() {
 /** Traduce errores típicos de MongoDB a mensajes útiles (sin revelar la URI). */
 export function mongoHint(err) {
   const msg = String(err?.message || err || "");
+  if (/Invalid scheme/i.test(msg)) {
+    return 'La variable MONGODB_URI no es una cadena de conexión válida: debe empezar con "mongodb://" o "mongodb+srv://". En MongoDB Atlas ve a Database → Connect → Drivers, copia la cadena y reemplaza <username> y <password> por tus datos reales (sin los símbolos < >). Verifica que en Vercel la variable se llame exactamente MONGODB_URI y haz Redeploy.';
+  }
   if (/Server selection timed out|ECONNREFUSED|ENOTFOUND|network/i.test(msg)) {
     return "No se pudo conectar a MongoDB. Verifica la variable MONGODB_URI y en Atlas → Network Access permite la IP 0.0.0.0/0. Después haz Redeploy en Vercel.";
   }

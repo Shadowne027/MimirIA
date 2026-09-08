@@ -1,4 +1,4 @@
-import { getDb, send, preflight } from "./_lib.js";
+import { getDb, send, preflight, mongoHint } from "./_lib.js";
 
 /**
  * GET /api/health
