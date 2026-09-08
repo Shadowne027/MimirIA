@@ -1,12 +1,15 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, readBody, send, SYSTEM_PROMPT, preflight } from "./_lib.js";
+import { getDb, authUser, send, SYSTEM_PROMPT, preflight } from "./_lib.js";
+import formidable from "formidable";
+import fs from "fs";
 
 /**
- * POST /api/chat  { conversationId, message }
+ * POST /api/chat  { conversationId, message, files? }
  * 1. Carga el historial del usuario desde MongoDB.
  * 2. Consulta Gemini 3.6 Flash (Google) con contexto de la conversación.
  * 3. Guarda ambos mensajes en MongoDB (historial persistente por usuario).
  *
+ * Soporta archivos: imágenes (JPG, PNG, GIF, WebP) y PDFs hasta 20MB.
  * Gemini es gratuito con límites generosos (1M tokens/día).
  * Incluye retry automático si el modelo está saturado.
  */
@@ -137,16 +140,126 @@ async function callGemini(contents, maxRetries = 2) {
   }
 }
 
+/**
+ * Parsea multipart/form-data para extraer campos y archivos.
+ */
+function parseForm(req) {
+  return new Promise((resolve, reject) => {
+    const form = formidable({
+      maxFileSize: 20 * 1024 * 1024, // 20MB
+      maxFiles: 5,
+      keepExtensions: true,
+    });
+
+    form.parse(req, (err, fields, files) => {
+      if (err) return reject(err);
+      resolve({ fields, files });
+    });
+  });
+}
+
+/**
+ * Convierte un archivo a base64 para enviar a Gemini.
+ */
+function fileToBase64(filePath) {
+  return new Promise((resolve, reject) => {
+    fs.readFile(filePath, (err, data) => {
+      if (err) return reject(err);
+      resolve(data.toString("base64"));
+    });
+  });
+}
+
+/**
+ * Determina el MIME type de Gemini según la extensión.
+ */
+function getGeminiMimeType(mimeType, originalFilename) {
+  const ext = originalFilename?.toLowerCase().split(".").pop();
+  
+  // Imágenes
+  if (mimeType?.startsWith("image/") || ["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) {
+    if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+    if (ext === "png") return "image/png";
+    if (ext === "gif") return "image/gif";
+    if (ext === "webp") return "image/webp";
+    return "image/jpeg"; // fallback
+  }
+  
+  // PDFs
+  if (mimeType === "application/pdf" || ext === "pdf") {
+    return "application/pdf";
+  }
+  
+  return null;
+}
+
 export default async function handler(req, res) {
   if (preflight(req, res)) return;
   if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
+  
   try {
     const user = await authUser(req);
     if (!user) return send(res, 401, { error: "Sesión inválida. Inicia sesión de nuevo." });
 
-    const { conversationId, message } = await readBody(req);
+    // Parsear el formulario (puede incluir archivos)
+    let conversationId, message, uploadedFiles = [];
+    
+    const contentType = req.headers["content-type"] || "";
+    
+    if (contentType.includes("multipart/form-data")) {
+      const { fields, files } = await parseForm(req);
+      conversationId = fields.conversationId?.[0] || fields.conversationId;
+      message = fields.message?.[0] || fields.message || "";
+      
+      // Procesar archivos subidos
+      const fileArray = files.files || [];
+      const filesToProcess = Array.isArray(fileArray) ? fileArray : [fileArray];
+      
+      for (const file of filesToProcess) {
+        if (!file || !file.filepath) continue;
+        
+        const mimeType = getGeminiMimeType(file.mimetype, file.originalFilename);
+        if (!mimeType) {
+          // Limpiar archivo temporal
+          fs.unlink(file.filepath, () => {});
+          continue;
+        }
+        
+        try {
+          const base64 = await fileToBase64(file.filepath);
+          uploadedFiles.push({
+            mimeType,
+            data: base64,
+            name: file.originalFilename,
+          });
+        } catch (err) {
+          console.error("Error procesando archivo:", err);
+        } finally {
+          // Limpiar archivo temporal
+          fs.unlink(file.filepath, () => {});
+        }
+      }
+    } else {
+      // JSON tradicional (sin archivos)
+      const body = await new Promise((resolve) => {
+        let data = "";
+        req.on("data", (chunk) => (data += chunk));
+        req.on("end", () => {
+          try {
+            resolve(JSON.parse(data || "{}"));
+          } catch {
+            resolve({});
+          }
+        });
+      });
+      conversationId = body.conversationId;
+      message = body.message || "";
+    }
+
     const text = String(message || "").trim();
-    if (!text) return send(res, 400, { error: "Escribe un mensaje." });
+    if (!text && uploadedFiles.length === 0) {
+      return send(res, 400, { error: "Escribe un mensaje o adjunta un archivo." });
+    }
 
     const db = await getDb();
     const col = db.collection("conversations");
@@ -163,13 +276,31 @@ export default async function handler(req, res) {
       .slice(-16)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    // Construir el contenido del mensaje del usuario
+    const userParts = [];
+    
+    // Agregar texto si existe
+    if (text) {
+      userParts.push({ text });
+    }
+    
+    // Agregar archivos (imágenes/PDFs)
+    for (const file of uploadedFiles) {
+      userParts.push({
+        inline_data: {
+          mime_type: file.mimeType,
+          data: file.data,
+        },
+      });
+    }
+
     // Convertir historial al formato de Gemini
     const geminiContents = [
       ...history.map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
       })),
-      { role: "user", parts: [{ text }] },
+      { role: "user", parts: userParts },
     ];
 
     let ai;
@@ -197,13 +328,22 @@ export default async function handler(req, res) {
 
     const now = Date.now();
     const isFirstExchange = (convo.messages || []).length === 0;
+    
+    // Guardar mensaje del usuario con información de archivos
+    const userMessageContent = text || (uploadedFiles.length > 0 ? `[${uploadedFiles.length} archivo(s) adjunto(s)]` : "");
+    
     await col.updateOne(
       { _id: convo._id },
       {
         $push: {
           messages: {
             $each: [
-              { role: "user", content: text, at: now },
+              { 
+                role: "user", 
+                content: userMessageContent, 
+                files: uploadedFiles.map(f => ({ name: f.name, mimeType: f.mimeType })),
+                at: now 
+              },
               { role: "assistant", content: replyText, sources, followUps: followups, at: now },
             ],
           },
@@ -211,7 +351,7 @@ export default async function handler(req, res) {
         $set: {
           updatedAt: now,
           ...(isFirstExchange
-            ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") }
+            ? { title: (text || "Análisis de archivo").slice(0, 48) + ((text || "Análisis de archivo").length > 48 ? "…" : "") }
             : {}),
         },
       }
@@ -219,6 +359,7 @@ export default async function handler(req, res) {
 
     return send(res, 200, { text: replyText, sources, followups });
   } catch (e) {
+    console.error("Error en /api/chat:", e);
     return send(res, 500, { error: "Error interno del servidor." });
   }
 }

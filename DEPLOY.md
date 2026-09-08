@@ -24,7 +24,8 @@ El contador de IDs vive en `counters` → cada registro nuevo recibe el siguient
 
 1. Entra a [Google AI Studio](https://aistudio.google.com/apikey) e inicia sesión con tu cuenta de Google.
 2. Haz clic en **"Create API key"** y cópiala.
-3. Gemini 2.0 Flash es **gratuito** con límites generosos (1 millón de tokens/día, 15 requests/minuto).
+3. Gemini 3.6 Flash es **gratuito** con límites generosos (1 millón de tokens/día, 15 requests/minuto).
+4. **Soporta análisis de imágenes y PDFs** (hasta 20MB por archivo, 5 archivos por mensaje).
 
 ## 3. Vercel
 

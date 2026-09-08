@@ -19,6 +19,7 @@ export interface ChatMessage {
   followUps?: string[];
   at: number;
   id?: string; // marcador temporal para la animación de escritura
+  files?: { name: string; type: string }[]; // archivos adjuntos
 }
 
 export interface Conversation {
@@ -232,14 +233,37 @@ export interface ChatReply {
 export async function sendMessage(
   user: AuthUser,
   conversationId: string,
-  message: string
+  message: string,
+  files?: File[]
 ): Promise<ChatReply> {
   await requireServer();
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: authHeaders(user.token),
-    body: JSON.stringify({ conversationId, message }),
-  });
+  
+  let res: Response;
+  
+  if (files && files.length > 0) {
+    // Enviar con archivos (multipart/form-data)
+    const formData = new FormData();
+    formData.append("conversationId", conversationId);
+    formData.append("message", message);
+    files.forEach((file) => formData.append("files", file));
+    
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${user.token}`,
+        // No poner Content-Type, el navegador lo hace automáticamente con el boundary
+      },
+      body: formData,
+    });
+  } else {
+    // Enviar solo texto (JSON)
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify({ conversationId, message }),
+    });
+  }
+  
   const data = await parseApiResponse(res);
   if (res.ok && data?.text) {
     return {
