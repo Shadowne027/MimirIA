@@ -3,7 +3,6 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   Compass, ExternalLink, Globe, Loader2, LogOut, Menu,
   Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff, RefreshCw, AlertTriangle,
-  Paperclip, Image as ImageIcon, FileText,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
@@ -56,9 +55,6 @@ export default function ChatPage() {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const [filePreviews, setFilePreviews] = useState<{ name: string; url: string; type: string }[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamTimer = useRef<number | null>(null);
@@ -153,70 +149,6 @@ export default function ChatPage() {
 
   const retryConnection = () => loadAll(true);
 
-  // ================= Manejo de archivos =================
-  const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
-  const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
-  const MAX_FILES = 5;
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Validar cantidad
-    if (attachedFiles.length + files.length > MAX_FILES) {
-      toast.error(`Máximo ${MAX_FILES} archivos por mensaje`);
-      return;
-    }
-
-    const validFiles: File[] = [];
-    const previews: typeof filePreviews = [];
-
-    for (const file of files) {
-      // Validar tipo
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        toast.error(`Tipo no permitido: ${file.name}. Solo imágenes y PDFs.`);
-        continue;
-      }
-      // Validar tamaño
-      if (file.size > MAX_FILE_SIZE) {
-        toast.error(`Archivo muy grande: ${file.name} (máx. 20MB)`);
-        continue;
-      }
-      validFiles.push(file);
-      
-      // Crear preview para imágenes
-      if (file.type.startsWith("image/")) {
-        const url = URL.createObjectURL(file);
-        previews.push({ name: file.name, url, type: file.type });
-      } else {
-        previews.push({ name: file.name, url: "", type: file.type });
-      }
-    }
-
-    setAttachedFiles((prev) => [...prev, ...validFiles]);
-    setFilePreviews((prev) => [...prev, ...previews]);
-    
-    // Limpiar el input para poder seleccionar el mismo archivo de nuevo
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const removeFile = (index: number) => {
-    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
-    setFilePreviews((prev) => {
-      const file = prev[index];
-      if (file?.url) URL.revokeObjectURL(file.url);
-      return prev.filter((_, i) => i !== index);
-    });
-  };
-
-  const clearAllFiles = () => {
-    filePreviews.forEach((f) => {
-      if (f.url) URL.revokeObjectURL(f.url);
-    });
-    setAttachedFiles([]);
-    setFilePreviews([]);
-  };
-
   const typewriter = (convoId: string, msgId: string, full: string, meta: Partial<ChatMessage>) => {
     const words = full.split(/(\s+)/);
     let i = 0;
@@ -247,13 +179,8 @@ export default function ChatPage() {
 
   const handleSend = async (raw?: string) => {
     const text = (raw ?? input).trim();
-    const files = attachedFiles;
-    
-    // Permitir enviar solo con archivos (sin texto)
-    if ((!text && files.length === 0) || thinking || !user) return;
-    
+    if (!text || thinking || !user) return;
     setInput("");
-    clearAllFiles();
 
     let convoId = activeId;
     if (!convoId) {
@@ -264,27 +191,11 @@ export default function ChatPage() {
     }
     const targetId = convoId;
 
-    // Construir contenido del mensaje del usuario
-    let userContent = text;
-    if (!text && files.length > 0) {
-      userContent = files.length === 1 
-        ? `📎 ${files[0].name}` 
-        : `📎 ${files.length} archivos adjuntos`;
-    }
-
-    const userMsg: ChatMessage = { 
-      role: "user", 
-      content: userContent, 
-      at: Date.now(),
-      files: files.map(f => ({ name: f.name, type: f.type })),
-    };
-    
+    const userMsg: ChatMessage = { role: "user", content: text, at: Date.now() };
     const asstId = uid();
     patchConvo(targetId, (c) => ({
       ...c,
-      title: c.messages.length === 0 
-        ? (text || "Análisis de archivo").slice(0, 48) + ((text || "Análisis de archivo").length > 48 ? "…" : "") 
-        : c.title,
+      title: c.messages.length === 0 ? text.slice(0, 48) + (text.length > 48 ? "…" : "") : c.title,
       updatedAt: Date.now(),
       messages: [...c.messages, userMsg, { role: "assistant", content: "", at: Date.now() } as ChatMessage],
     }));
@@ -301,7 +212,7 @@ export default function ChatPage() {
 
     setThinking(true);
     try {
-      const reply = await sendMessage(user, targetId, text, files.length > 0 ? files : undefined);
+      const reply = await sendMessage(user, targetId, text);
       setThinking(false);
       typewriter(targetId, asstId, reply.text, {
         sources: reply.sources,
@@ -337,414 +248,292 @@ export default function ChatPage() {
       <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)]/90 px-4 py-3 backdrop-blur md:px-6">
         <div className="flex items-center gap-3">
           <button
-            className="rounded-lg p-2 text-[var(--text-2)] transition-colors hover:bg-[var(--bg-soft)] lg:hidden"
-            onClick={() => setSidebarOpen(true)}
-            aria-label="Abrir historial"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="rounded-lg p-2 text-[var(--text-2)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--text)] md:hidden"
+            aria-label="Menú"
           >
-            <Menu size={20} />
+            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
           <Link to="/" className="flex items-center gap-2.5">
             <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
               <img src={LOGO} alt="" className="h-full w-full object-cover" />
             </span>
-            <span className="font-display text-lg font-semibold tracking-tight">
+            <span className="font-display text-lg font-semibold tracking-tight text-[var(--text)]">
               MIMIR <span className="text-[var(--brand-text)]">IA</span>
             </span>
           </Link>
-          <span className="hidden rounded-full border border-[var(--border-soft)] bg-[var(--bg-soft)] px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--text-3)] sm:inline">
-            Tutor con fuentes
-          </span>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleNew}
-            className="hidden items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-medium text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)] md:flex"
-          >
-            <Plus size={15} /> Nueva conversación
-          </button>
+          <div className="hidden items-center gap-2 text-sm text-[var(--text-2)] md:flex">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-bold uppercase text-white">
+              {user?.username?.slice(0, 1)}
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="text-xs font-semibold text-[var(--text)]">{user?.username}</span>
+              <span className="font-mono text-[10px] text-[var(--amber)]">{user?.id}</span>
+            </div>
+          </div>
           <button
             onClick={handleLogout}
-            data-testid="chat-logout"
-            className="flex items-center gap-1.5 rounded-full px-3 py-2 text-sm text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)]"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--text)]"
           >
-            <LogOut size={15} /> <span className="hidden sm:inline">Salir</span>
+            <LogOut size={16} /> <span className="hidden sm:inline">Salir</span>
           </button>
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1">
-        {/* ===== Sidebar (historial) ===== */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* ===== Sidebar ===== */}
         <aside
-          className={`${
-            sidebarOpen ? "fixed inset-0 z-50 flex" : "hidden"
-          } w-full flex-col border-r border-[var(--border)] bg-[var(--bg-soft)] lg:static lg:flex lg:w-72 lg:shrink-0`}
+          className={`absolute inset-y-0 left-0 z-40 w-72 transform border-r border-[var(--border)] bg-[var(--bg)] transition-transform duration-300 md:relative md:translate-x-0 ${
+            sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
         >
-          {sidebarOpen && (
-            <button className="absolute inset-0 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Cerrar" />
-          )}
-          <div className="relative z-10 flex h-full w-full flex-col bg-[var(--bg-soft)] lg:w-72">
-            <div className="flex items-center justify-between border-b border-[var(--border)] p-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-bold uppercase text-white">
-                  {user?.username?.slice(0, 1)}
-                </div>
-                <div className="leading-tight">
-                  <div className="max-w-[120px] truncate text-sm font-semibold">{user?.username}</div>
-                  <div className="font-mono text-[10px] text-[var(--amber)]">
-                    Estudiante {user?.id}
-                  </div>
-                </div>
-              </div>
-              <button className="p-1.5 text-[var(--text-3)] hover:text-[var(--text)] lg:hidden" onClick={() => setSidebarOpen(false)} aria-label="Cerrar historial">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="p-3">
+          <div className="flex h-full flex-col">
+            <div className="border-b border-[var(--border)] p-4">
               <button
                 onClick={handleNew}
-                data-testid="new-conversation-btn"
-                className="flex w-full items-center justify-center gap-2 rounded-full bg-[var(--brand)] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--brand-hover)]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
               >
                 <Plus size={16} /> Nueva conversación
               </button>
             </div>
-
-            <nav className="chat-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-3 pb-3">
+            <div className="flex-1 overflow-y-auto chat-scroll p-3">
               {loadingHistory ? (
-                <div className="flex items-center justify-center gap-2 py-8 text-sm text-[var(--text-3)]">
-                  <Loader2 size={16} className="animate-spin" /> Cargando historial…
+                <div className="flex items-center justify-center py-8 text-sm text-[var(--text-3)]">
+                  <Loader2 size={16} className="animate-spin" /> Cargando…
                 </div>
               ) : conversations.length === 0 ? (
-                <div className="px-3 py-8 text-center text-sm text-[var(--text-3)]">
-                  Aún no tienes conversaciones.
-                  <br />
-                  <span className="text-xs">¡Haz tu primera pregunta!</span>
+                <div className="flex flex-col items-center justify-center gap-2 py-8 text-center text-sm text-[var(--text-3)]">
+                  <MessageSquare size={24} className="opacity-40" />
+                  <p>Sin conversaciones aún</p>
                 </div>
               ) : (
-                conversations.map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() => {
-                      setActiveId(c.id);
-                      setSidebarOpen(false);
-                    }}
-                    data-testid={`conversation-${c.id}`}
-                    className={`group flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition-all ${
-                      c.id === activeId
-                        ? "border-[var(--brand)]/50 bg-[var(--surface)] text-[var(--text)]"
-                        : "border-transparent text-[var(--text-2)] hover:border-[var(--border)] hover:bg-[var(--surface)]"
-                    }`}
-                  >
-                    <MessageSquare size={15} className="shrink-0 text-[var(--brand-text)]" />
-                    <span className="min-w-0 flex-1 truncate">{c.title || "Nueva conversación"}</span>
-                    <span className="font-mono text-[9px] text-[var(--text-3)]">{c.messages.length}</span>
+                <div className="space-y-1">
+                  {conversations.map((c) => (
                     <button
-                      onClick={(e) => handleDelete(c.id, e)}
-                      aria-label={`Eliminar ${c.title}`}
-                      className="rounded-md p-1 text-[var(--text-3)] opacity-0 transition-all hover:bg-red-500/10 hover:text-red-500 group-hover:opacity-100"
+                      key={c.id}
+                      onClick={() => {
+                        setActiveId(c.id);
+                        setSidebarOpen(false);
+                      }}
+                      className={`group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                        activeId === c.id
+                          ? "bg-[var(--bg-soft)] text-[var(--text)]"
+                          : "text-[var(--text-2)] hover:bg-[var(--bg-soft)] hover:text-[var(--text)]"
+                      }`}
                     >
-                      <Trash2 size={13} />
+                      <MessageSquare size={14} className="shrink-0 opacity-60" />
+                      <span className="flex-1 truncate">{c.title}</span>
+                      <button
+                        onClick={(e) => handleDelete(c.id, e)}
+                        className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--bg)] group-hover:opacity-100"
+                        aria-label="Eliminar"
+                      >
+                        <Trash2 size={12} className="text-[var(--text-3)] hover:text-red-500" />
+                      </button>
                     </button>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
-            </nav>
-
-            <div className="border-t border-[var(--border)] p-3">
-              <div
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-xs ${
-                  health?.ok
-                    ? "border-[var(--brand)]/30 bg-[var(--brand-tint)] text-[var(--brand-text)]"
-                    : "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-400"
-                }`}
-              >
-                {health?.ok ? <Wifi size={14} className="shrink-0" /> : <WifiOff size={14} className="shrink-0" />}
-                <span className="flex-1">
-                  {health === null
-                    ? "Verificando conexión…"
-                    : health.ok
-                    ? "Conectado · Gemini + MongoDB"
-                    : "Sin conexión con el servidor"}
-                </span>
-                {!health?.ok && health !== null && (
-                  <button
-                    onClick={retryConnection}
-                    aria-label="Reintentar conexión"
-                    className="rounded-md p-1 transition-colors hover:bg-red-500/10"
-                  >
-                    <RefreshCw size={13} className={loadingHistory ? "animate-spin" : ""} />
-                  </button>
+            </div>
+            <div className="border-t border-[var(--border)] p-3 text-xs text-[var(--text-3)]">
+              <div className="flex items-center gap-2">
+                {health?.ok ? (
+                  <>
+                    <Wifi size={12} className="text-[var(--brand-text)]" />
+                    <span>Conectado · Gemini + MongoDB</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff size={12} className="text-red-500" />
+                    <span>Sin conexión al servidor</span>
+                  </>
                 )}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5">
+                <Sparkles size={11} className="text-[var(--amber)]" />
+                <span>Estudiante {user?.id}</span>
               </div>
             </div>
           </div>
         </aside>
 
-        {/* ===== Zona de conversación ===== */}
-        <main className="relative flex min-w-0 flex-1 flex-col">
-          <div className="grain pointer-events-none absolute inset-0" aria-hidden="true" />
-          <div className="chat-scroll relative min-h-0 flex-1 overflow-y-auto">
-            {loadingHistory ? (
-              <div className="flex h-full items-center justify-center gap-2 text-[var(--text-3)]">
-                <Loader2 size={18} className="animate-spin" /> Preparando tu espacio de estudio…
+        {/* ===== Área de chat ===== */}
+        <main className="flex flex-1 flex-col overflow-hidden">
+          {!active ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+              {health && !health.ok ? (
+                <>
+                  <AlertTriangle size={48} className="text-red-500" />
+                  <h1 className="font-display text-2xl font-semibold tracking-tight">
+                    MIMIR no está en línea
+                  </h1>
+                  <p className="max-w-md text-sm text-[var(--text-2)]">
+                    {health.mongoError || "No se pudo conectar con el servidor."}
+                  </p>
+                  <button
+                    onClick={retryConnection}
+                    className="flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
+                  >
+                    <RefreshCw size={15} className={loadingHistory ? "animate-spin" : ""} /> Reintentar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)] shadow-[0_10px_30px_var(--shadow-brand)]">
+                    <img src={LOGO} alt="" className="h-full w-full object-cover" />
+                  </span>
+                  <h1 className="font-display text-2xl font-semibold tracking-tight">
+                    Bienvenido a MIMIR IA
+                  </h1>
+                  <p className="max-w-md text-sm text-[var(--text-2)]">
+                    Tu tutor personal con fuentes verificadas. Haz una pregunta para comenzar.
+                  </p>
+                  <button
+                    onClick={handleNew}
+                    className="flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
+                  >
+                    <Plus size={15} /> Nueva conversación
+                  </button>
+                </>
+              )}
+            </div>
+          ) : (
+            <>
+              {/* Header de conversación */}
+              <div className="border-b border-[var(--border)] px-4 py-3 md:px-6">
+                <h2 className="truncate text-sm font-medium text-[var(--text)]">{active.title}</h2>
               </div>
-            ) : health && !health.ok ? (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <span className="inline-flex h-14 w-14 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10 text-red-500">
-                  <AlertTriangle size={26} />
-                </span>
-                <h1 className="font-display mt-5 text-xl font-semibold tracking-tight sm:text-2xl">
-                  MIMIR no está en línea ahora mismo
-                </h1>
-                <p className="mt-2 max-w-md text-sm text-[var(--text-2)]">
-                  No se pudo conectar con el servidor, donde viven tu cuenta, tu historial y la IA.
-                  {health.mongoError ? ` Detalle: ${health.mongoError}` : ""}
-                </p>
-                <button
-                  onClick={retryConnection}
-                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
-                >
-                  <RefreshCw size={15} className={loadingHistory ? "animate-spin" : ""} /> Reintentar conexión
-                </button>
-              </div>
-            ) : !active || active.messages.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-                <span className="inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)] shadow-[0_10px_30px_var(--shadow-brand)]">
-                  <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                </span>
-                <h1 className="font-display mt-6 text-2xl font-semibold tracking-tight sm:text-3xl">
-                  Hola{user ? `, ${user.username}` : ""}. Soy MIMIR.
-                </h1>
-                <p className="mt-2 max-w-md text-sm text-[var(--text-2)] sm:text-base">
-                  Pregúntame lo que estés estudiando. Te explico paso a paso, con fuentes verificadas y preguntas para que pienses.
-                </p>
-                {user && (
-                  <div className="mt-3 rounded-full border border-[var(--border-soft)] bg-[var(--bg-soft)] px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--amber)]">
-                    Sesión vinculada al ID {user.id}
-                  </div>
-                )}
-                <div className="mt-8 grid w-full max-w-lg grid-cols-1 gap-2 sm:grid-cols-2">
-                  {["¿Qué es la fotosíntesis?", "Explícame las ecuaciones cuadráticas", "¿Qué fue la Guerra de los Mil Días?", "¿Qué es una IA?"].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleSend(s)}
-                      className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-left text-sm text-[var(--text-2)] transition-all hover:-translate-y-0.5 hover:border-[var(--brand)] hover:text-[var(--brand-text)]"
-                    >
-                      <Sparkles size={13} className="mb-1 text-[var(--amber)]" />
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6 md:px-8">
-                {active.messages.map((m, i) =>
-                  m.role === "user" ? (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[85%] space-y-2">
-                        {/* Mostrar archivos adjuntos */}
-                        {m.files && m.files.length > 0 && (
-                          <div className="flex flex-wrap justify-end gap-2">
-                            {m.files.map((file, j) => (
-                              <div key={j} className="overflow-hidden rounded-lg border border-[var(--brand)]/30 bg-[var(--brand)]/10">
-                                {file.type.startsWith("image/") ? (
-                                  <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-white/80">
-                                    <ImageIcon size={12} />
-                                    <span className="max-w-[120px] truncate">{file.name}</span>
-                                  </div>
-                                ) : (
-                                  <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-white/80">
-                                    <FileText size={12} />
-                                    <span className="max-w-[120px] truncate">{file.name}</span>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {/* Mostrar texto del mensaje */}
-                        {m.content && !m.content.startsWith("📎") && (
-                          <div className="rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-2.5 text-sm text-white">
-                            {m.content}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div key={i} className="flex gap-3">
-                      <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                        <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                      </span>
-                      <div className="max-w-[90%] min-w-0">
-                        <div className="rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-2)]">
-                          {m.content ? (
-                            <RichText text={m.content} />
-                          ) : (
-                            <span className="flex items-center gap-1.5 py-1">
-                              <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                              <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                              <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                            </span>
-                          )}
-                          {m.sources && m.sources.length > 0 && m.content && (
-                            <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
-                              <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--brand-text)]">
-                                <Globe size={11} /> Fuentes citadas
-                              </div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {m.sources.map((s, j) => (
-                                  <a
-                                    key={j}
-                                    href={s.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-soft)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)]"
-                                  >
-                                    {s.label} <ExternalLink size={10} />
-                                  </a>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        {m.followUps && m.followUps.length > 0 && streamingId === null && i === active.messages.length - 1 && (
-                          <div className="mt-2.5 flex flex-wrap gap-1.5">
-                            {m.followUps.map((f, j) => (
-                              <button
-                                key={j}
-                                onClick={() => handleSend(f)}
-                                disabled={busy}
-                                className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)] disabled:opacity-50"
-                              >
-                                <Compass size={11} className="text-[var(--amber)]" /> {f}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                )}
-                {thinking && (
-                  <div className="flex items-center gap-3">
-                    <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
+
+              {/* Mensajes */}
+              <div className="flex-1 overflow-y-auto chat-scroll">
+                {active.messages.length === 0 ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
+                    <span className="inline-flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
                       <img src={LOGO} alt="" className="h-full w-full object-cover" />
                     </span>
-                    <div className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-3)]">
-                      <Loader2 size={13} className="animate-spin text-[var(--brand-text)]" />
-                      MIMIR está consultando fuentes…
-                    </div>
-                  </div>
-                )}
-                <div ref={bottomRef} />
-              </div>
-            )}
-          </div>
-
-          {/* ===== Input ===== */}
-          <div className="relative border-t border-[var(--border)] bg-[var(--bg)]/90 p-3 backdrop-blur md:p-4">
-            {/* Input file oculto */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-            
-            {/* Preview de archivos adjuntos */}
-            {filePreviews.length > 0 && (
-              <div className="mx-auto mb-2 max-w-3xl">
-                <div className="flex flex-wrap gap-2 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-3">
-                  {filePreviews.map((file, i) => (
-                    <div key={i} className="group relative">
-                      {file.url ? (
-                        // Preview de imagen
-                        <div className="relative h-16 w-16 overflow-hidden rounded-lg border border-[var(--border-soft)]">
-                          <img src={file.url} alt={file.name} className="h-full w-full object-cover" />
-                          <button
-                            type="button"
-                            onClick={() => removeFile(i)}
-                            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      ) : (
-                        // Preview de PDF
-                        <div className="relative flex h-16 w-16 flex-col items-center justify-center rounded-lg border border-[var(--border-soft)] bg-[var(--bg-soft)]">
-                          <FileText size={20} className="text-[var(--brand-text)]" />
-                          <span className="mt-0.5 text-[8px] font-medium text-[var(--text-3)]">PDF</span>
-                          <button
-                            type="button"
-                            onClick={() => removeFile(i)}
-                            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      )}
-                      <p className="mt-1 max-w-[64px] truncate text-[9px] text-[var(--text-3)]" title={file.name}>
-                        {file.name}
+                    <div>
+                      <h3 className="font-display text-lg font-semibold tracking-tight">
+                        ¿En qué te ayudo hoy?
+                      </h3>
+                      <p className="mt-1 text-sm text-[var(--text-2)]">
+                        Pregúntame lo que necesites entender.
                       </p>
                     </div>
-                  ))}
-                  {filePreviews.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={clearAllFiles}
-                      className="flex h-16 w-16 flex-col items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-[10px] text-[var(--text-3)] transition-colors hover:border-red-400 hover:text-red-400"
-                    >
-                      <X size={14} />
-                      Quitar todo
-                    </button>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6 md:px-8">
+                    {active.messages.map((m, i) =>
+                      m.role === "user" ? (
+                        <div key={i} className="flex justify-end">
+                          <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-2.5 text-sm text-white">
+                            {m.content}
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={i} className="flex gap-3">
+                          <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
+                            <img src={LOGO} alt="" className="h-full w-full object-cover" />
+                          </span>
+                          <div className="max-w-[90%] min-w-0">
+                            <div className="rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-2)]">
+                              {m.content ? (
+                                <RichText text={m.content} />
+                              ) : (
+                                <span className="flex items-center gap-1.5 py-1">
+                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
+                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
+                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
+                                </span>
+                              )}
+                              {m.sources && m.sources.length > 0 && m.content && (
+                                <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
+                                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--brand-text)]">
+                                    <Globe size={11} /> Fuentes citadas
+                                  </div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {m.sources.map((s, j) => (
+                                      <a
+                                        key={j}
+                                        href={s.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-soft)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)]"
+                                      >
+                                        {s.label} <ExternalLink size={10} />
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                            {m.followUps && m.followUps.length > 0 && streamingId === null && i === active.messages.length - 1 && (
+                              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                                {m.followUps.map((f, j) => (
+                                  <button
+                                    key={j}
+                                    onClick={() => handleSend(f)}
+                                    disabled={busy}
+                                    className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)] disabled:opacity-50"
+                                  >
+                                    <Compass size={11} className="text-[var(--amber)]" /> {f}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    )}
+                    {thinking && (
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
+                          <img src={LOGO} alt="" className="h-full w-full object-cover" />
+                        </span>
+                        <div className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-3)]">
+                          <Loader2 size={13} className="animate-spin text-[var(--brand-text)]" />
+                          MIMIR está consultando fuentes…
+                        </div>
+                      </div>
+                    )}
+                    <div ref={bottomRef} />
+                  </div>
+                )}
               </div>
-            )}
-            
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleSend();
-              }}
-              className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
-            >
-              {/* Botón adjuntar archivo */}
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={busy || filePreviews.length >= 5}
-                aria-label="Adjuntar archivo"
-                title="Adjuntar imagen o PDF (máx. 20MB)"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)] disabled:opacity-40"
-              >
-                <Paperclip size={18} />
-              </button>
-              
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Escribe tu pregunta… o adjunta una imagen"
-                data-testid="chat-input"
-                className="h-10 min-w-0 flex-1 bg-transparent px-2 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
-              />
-              <button
-                type="submit"
-                disabled={busy || (!input.trim() && attachedFiles.length === 0)}
-                data-testid="chat-send"
-                aria-label="Enviar"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white transition-all hover:bg-[var(--brand-hover)] active:scale-90 disabled:opacity-40"
-              >
-                {thinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </form>
-            <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
-              MIMIR puede analizar imágenes y PDFs • Máx. 20MB por archivo • Hasta 5 archivos
-            </p>
-          </div>
+
+              {/* ===== Input ===== */}
+              <div className="relative border-t border-[var(--border)] bg-[var(--bg)]/90 p-3 backdrop-blur md:p-4">
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSend();
+                  }}
+                  className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
+                >
+                  <input
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder="Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"
+                    data-testid="chat-input"
+                    className="h-10 min-w-0 flex-1 bg-transparent px-4 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={busy || !input.trim()}
+                    data-testid="chat-send"
+                    aria-label="Enviar"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white transition-all hover:bg-[var(--brand-hover)] active:scale-90 disabled:opacity-40"
+                  >
+                    {thinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                  </button>
+                </form>
+                <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
+                  MIMIR puede cometer errores: verifica siempre las fuentes citadas.
+                </p>
+              </div>
+            </>
+          )}
         </main>
       </div>
 
