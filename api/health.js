@@ -34,7 +34,7 @@ export default async function handler(req, res) {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 8000);
       const r = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash?key=${process.env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash?key=${process.env.GEMINI_API_KEY}`,
         { signal: ctrl.signal }
       );
       clearTimeout(t);
@@ -61,7 +61,7 @@ export default async function handler(req, res) {
     mongoError,
     gemini,
     geminiError,
-    model: "gemini-2.0-flash",
+    model: "gemini-3.6-flash",
     hint: !ok
       ? "Mientras `ok` sea false, la página no puede funcionar. Corrige lo indicado arriba y haz Redeploy."
       : undefined,
