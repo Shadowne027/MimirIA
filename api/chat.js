@@ -95,10 +95,14 @@ function extractFieldsFallback(raw) {
 }
 
 /**
- * Llama a OpenAI GPT-5-mini con retry automático si está saturado.
+ * Llama a OpenAI GPT-4o-mini con retry automático si está saturado.
  */
 async function callOpenAI(messages, maxRetries = 2) {
+  console.log('[CHAT] Llamando a OpenAI con modelo gpt-4o-mini...');
+  
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    console.log(`[CHAT] Intento ${attempt + 1} de ${maxRetries + 1}`);
+    
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -106,25 +110,32 @@ async function callOpenAI(messages, maxRetries = 2) {
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "gpt-5-mini",
+        model: "gpt-4o-mini",
         messages,
         temperature: 0.7,
         max_tokens: 2048,
       }),
     });
 
+    console.log('[CHAT] Status de OpenAI:', aiRes.status);
+
     if (aiRes.ok) {
-      return await aiRes.json();
+      const data = await aiRes.json();
+      console.log('[CHAT] Respuesta recibida de OpenAI');
+      return data;
     }
 
     // Si es error de alta demanda o rate limit, reintentar
     const errBody = await aiRes.json().catch(() => ({}));
     const errMsg = errBody?.error?.message || "";
+    
+    console.log('[CHAT] Error de OpenAI:', errMsg);
 
     if (
       (aiRes.status === 429 || aiRes.status === 503 || /rate limit|high demand|temporarily unavailable/i.test(errMsg)) &&
       attempt < maxRetries
     ) {
+      console.log(`[CHAT] Reintentando en ${2000 * (attempt + 1)}ms...`);
       // Esperar 2, 4 segundos entre reintentos
       await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
       continue;
@@ -140,11 +151,22 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
   
   try {
+    console.log('[CHAT] Iniciando procesamiento de mensaje...');
+    
     const user = await authUser(req);
-    if (!user) return send(res, 401, { error: "Sesión inválida. Inicia sesión de nuevo." });
+    if (!user) {
+      console.log('[CHAT] Error: Sesión inválida');
+      return send(res, 401, { error: "Sesión inválida. Inicia sesión de nuevo." });
+    }
+    
+    console.log('[CHAT] Usuario autenticado:', user.userId);
 
     const { conversationId, message } = await readBody(req);
     const text = String(message || "").trim();
+    
+    console.log('[CHAT] ConversationId:', conversationId);
+    console.log('[CHAT] Mensaje:', text.substring(0, 50) + '...');
+    
     if (!text) return send(res, 400, { error: "Escribe un mensaje." });
 
     const db = await getDb();
@@ -153,10 +175,17 @@ export default async function handler(req, res) {
     let convo = null;
     try {
       convo = await col.findOne({ _id: new ObjectId(String(conversationId)), userId: user.userId });
-    } catch {
+    } catch (e) {
+      console.log('[CHAT] Error al buscar conversación:', e.message);
       convo = null;
     }
-    if (!convo) return send(res, 404, { error: "Conversación no encontrada." });
+    
+    if (!convo) {
+      console.log('[CHAT] Conversación no encontrada');
+      return send(res, 404, { error: "Conversación no encontrada." });
+    }
+    
+    console.log('[CHAT] Conversación encontrada, mensajes anteriores:', convo.messages?.length || 0);
 
     const history = (convo.messages || [])
       .slice(-16)
@@ -168,29 +197,40 @@ export default async function handler(req, res) {
       ...history,
       { role: "user", content: text },
     ];
+    
+    console.log('[CHAT] Total de mensajes enviados a OpenAI:', openaiMessages.length);
 
     let ai;
     try {
       ai = await callOpenAI(openaiMessages);
     } catch (e) {
       const detail = e?.message || "Error desconocido";
-      return send(res, 502, { error: `La IA respondió un error: ${detail}` });
+      console.log('[CHAT] Error de OpenAI:', detail);
+      return send(res, 502, { 
+        error: `La IA respondió un error: ${detail}`,
+        details: detail
+      });
     }
 
     const raw = ai.choices?.[0]?.message?.content || "";
+    console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
 
     // Intentar parsear JSON, si falla usar fallback regex
     let parsed = extractJson(raw);
     if (!parsed) {
+      console.log('[CHAT] No se pudo parsear JSON, usando fallback regex');
       parsed = extractFieldsFallback(raw);
     }
     if (!parsed) {
+      console.log('[CHAT] Fallback también falló, usando respuesta raw');
       parsed = {};
     }
 
     const replyText = String(parsed.text || raw || "No logré formular una respuesta. ¿Puedes reformular tu pregunta?");
     const sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
     const followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
+    
+    console.log('[CHAT] Respuesta procesada, fuentes:', sources.length, 'followups:', followups.length);
 
     const now = Date.now();
     const isFirstExchange = (convo.messages || []).length === 0;
@@ -213,9 +253,15 @@ export default async function handler(req, res) {
         },
       }
     );
+    
+    console.log('[CHAT] Mensajes guardados en MongoDB');
 
     return send(res, 200, { text: replyText, sources, followups });
   } catch (e) {
-    return send(res, 500, { error: "Error interno del servidor." });
+    console.error('[CHAT] Error interno:', e);
+    return send(res, 500, { 
+      error: "Error interno del servidor.",
+      details: e.message || 'Error desconocido'
+    });
   }
 }

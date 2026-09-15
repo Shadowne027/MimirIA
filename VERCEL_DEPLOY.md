@@ -48,7 +48,7 @@ Debe mostrar:
   "build": "mimir-v5-openai",
   "mongo": true,
   "openai": true,
-  "model": "gpt-5-mini"
+  "model": "gpt-4o-mini"
 }
 ```
 
@@ -79,7 +79,7 @@ Debe mostrar:
 ## 🔧 Configuración Actual
 
 ### Backend (API)
-- `api/chat.js` → Usa GPT-5-mini de OpenAI
+- `api/chat.js` → Usa GPT-4o-mini de OpenAI
 - `api/health.js` → Verifica MongoDB y OpenAI
 - `api/register.js` → Crea usuarios con ID correlativo
 - `api/login.js` → Autenticación
@@ -98,7 +98,7 @@ Debe mostrar:
 - Colecciones: `users`, `conversations`, `counters`
 
 ### IA
-- OpenAI GPT-5-mini
+- OpenAI GPT-4o-mini
 - Respuestas en JSON con fuentes y preguntas de seguimiento
 
 ## 📞 Soporte
