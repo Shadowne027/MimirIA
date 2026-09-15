@@ -144,25 +144,33 @@ export async function register(username: string, password: string): Promise<Auth
   if (password.length < 6) throw new Error("La contraseña debe tener al menos 6 caracteres.");
 
   await requireServer();
+  
+  console.log('[API] Enviando registro...');
+  
   const res = await fetch("/api/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: uname, password }),
   });
   
+  console.log('[API] Status:', res.status);
+  
   // Intentar parsear la respuesta como JSON
+  const text = await res.text();
+  console.log('[API] Response:', text);
+  
   let data = null;
   try {
-    data = await res.json();
+    data = JSON.parse(text);
   } catch (e) {
-    throw new Error(`Error del servidor: ${res.status} ${res.statusText}`);
+    throw new Error(`Error del servidor: ${res.status} - ${text.substring(0, 200)}`);
   }
   
   if (data?.user) return data.user as AuthUser;
   
   // Si hay un error detallado del backend, mostrarlo
   if (data?.error) {
-    const details = data.details ? ` - ${data.details}` : '';
+    const details = data.details ? `\n${data.details}` : '';
     throw new Error(`${data.error}${details}`);
   }
   
@@ -174,14 +182,35 @@ export async function login(username: string, password: string): Promise<AuthUse
   if (!uname || !password) throw new Error("Escribe tu usuario y tu contraseña.");
 
   await requireServer();
+  
+  console.log('[API] Enviando login...');
+  
   const res = await fetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: uname, password }),
   });
-  const data = await parseApiResponse(res);
+  
+  console.log('[API] Status:', res.status);
+  
+  const text = await res.text();
+  console.log('[API] Response:', text);
+  
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Error del servidor: ${res.status} - ${text.substring(0, 200)}`);
+  }
+  
   if (data?.user) return data.user as AuthUser;
-  throw new Error(data?.error || "Usuario o contraseña incorrectos.");
+  
+  if (data?.error) {
+    const details = data.details ? `\n${data.details}` : '';
+    throw new Error(`${data.error}${details}`);
+  }
+  
+  throw new Error(`Usuario o contraseña incorrectos.`);
 }
 
 export async function me(token: string): Promise<AuthUser | null> {
