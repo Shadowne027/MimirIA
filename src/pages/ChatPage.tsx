@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   Compass, ExternalLink, Globe, Loader2, LogOut, Menu,
   Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff, RefreshCw, AlertTriangle,
+  Paperclip, Image as ImageIcon,
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import { useAuth } from "../contexts/AuthContext";
@@ -55,6 +56,9 @@ export default function ChatPage() {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamTimer = useRef<number | null>(null);
@@ -153,6 +157,45 @@ export default function ChatPage() {
 
   const retryConnection = () => loadAll(true);
 
+  // Manejo de archivos (imágenes, PDFs, Word, Excel)
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    // Limitar a 10 archivos máximo
+    const newImages = files.slice(0, 10 - selectedImages.length);
+    
+    // Crear previews
+    const newPreviews: string[] = [];
+    newImages.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        newPreviews.push(e.target?.result as string);
+        if (newPreviews.length === newImages.length) {
+          setImagePreviews(prev => [...prev, ...newPreviews]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    setSelectedImages(prev => [...prev, ...newImages]);
+    
+    // Limpiar el input para poder seleccionar el mismo archivo de nuevo
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const clearImages = () => {
+    setSelectedImages([]);
+    setImagePreviews([]);
+  };
+
   const typewriter = (convoId: string, msgId: string, full: string, meta: Partial<ChatMessage>) => {
     const words = full.split(/(\s+)/);
     let i = 0;
@@ -183,7 +226,7 @@ export default function ChatPage() {
 
   const handleSend = async (raw?: string) => {
     const text = (raw ?? input).trim();
-    if (!text || thinking || !user) return;
+    if ((!text && selectedImages.length === 0) || thinking || !user) return;
     setInput("");
 
     let convoId = activeId;
@@ -203,6 +246,10 @@ export default function ChatPage() {
       }
     }
     const targetId = convoId;
+
+    // Capturar imágenes antes de limpiar
+    const imagesToSend = [...selectedImages];
+    clearImages();
 
     const userMsg: ChatMessage = { role: "user", content: text, at: Date.now() };
     const asstId = uid();
@@ -225,7 +272,7 @@ export default function ChatPage() {
 
     setThinking(true);
     try {
-      const reply = await sendMessage(user, targetId, text);
+      const reply = await sendMessage(user, targetId, text, imagesToSend.length > 0 ? imagesToSend : undefined);
       setThinking(false);
       typewriter(targetId, asstId, reply.text, {
         sources: reply.sources,
@@ -233,10 +280,22 @@ export default function ChatPage() {
       });
     } catch (err) {
       setThinking(false);
-      const detalle =
-        err instanceof Error && err.message
-          ? err.message
-          : "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
+      let detalle = "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
+      
+      if (err instanceof Error) {
+        detalle = err.message;
+        
+        // Intentar extraer información adicional del error
+        try {
+          const errData = JSON.parse(err.message);
+          if (errData.error) detalle = errData.error;
+          if (errData.suggestion) detalle += `\n\n💡 ${errData.suggestion}`;
+          if (errData.model) detalle += `\n\nModelo usado: ${errData.model}`;
+        } catch {
+          // No es JSON, usar el mensaje tal cual
+        }
+      }
+      
       patchConvo(targetId, (c) => ({
         ...c,
         messages: c.messages.map((m) =>
@@ -517,6 +576,46 @@ export default function ChatPage() {
 
               {/* ===== Input ===== */}
               <div className="relative border-t border-[var(--border)] bg-[var(--bg)]/90 p-3 backdrop-blur md:p-4">
+                {/* Input file oculto */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,.txt,.md,.csv"
+                  multiple
+                  onChange={handleImageSelect}
+                  className="hidden"
+                />
+
+                {/* Previews de imágenes */}
+                {imagePreviews.length > 0 && (
+                  <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
+                    {imagePreviews.map((preview, index) => (
+                      <div key={index} className="group relative">
+                        <img
+                          src={preview}
+                          alt={`Preview ${index + 1}`}
+                          className="h-20 w-20 rounded-lg border border-[var(--border)] object-cover"
+                        />
+                        <button
+                          onClick={() => removeImage(index)}
+                          className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
+                          aria-label="Eliminar imagen"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {imagePreviews.length > 1 && (
+                      <button
+                        onClick={clearImages}
+                        className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-xs text-[var(--text-3)] transition-colors hover:border-red-400 hover:text-red-400"
+                      >
+                        Limpiar todo
+                      </button>
+                    )}
+                  </div>
+                )}
+
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -524,16 +623,28 @@ export default function ChatPage() {
                   }}
                   className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
                 >
+                  {/* Botón de adjuntar archivos */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={busy || selectedImages.length >= 10}
+                    aria-label="Adjuntar archivo"
+                    title="Adjuntar imágenes, PDFs, Word o Excel (máx. 10 archivos, 50MB c/u)"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)] disabled:opacity-40"
+                  >
+                    <Paperclip size={18} />
+                  </button>
+
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"
+                    placeholder={selectedImages.length > 0 ? "Agrega un mensaje o envía los archivos…" : "Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"}
                     data-testid="chat-input"
                     className="h-10 min-w-0 flex-1 bg-transparent px-4 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
                   />
                   <button
                     type="submit"
-                    disabled={busy || !input.trim()}
+                    disabled={busy || (!input.trim() && selectedImages.length === 0)}
                     data-testid="chat-send"
                     aria-label="Enviar"
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white transition-all hover:bg-[var(--brand-hover)] active:scale-90 disabled:opacity-40"
@@ -542,7 +653,7 @@ export default function ChatPage() {
                   </button>
                 </form>
                 <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
-                  MIMIR puede cometer errores: verifica siempre las fuentes citadas.
+                  MIMIR puede analizar imágenes, PDFs, Word y Excel. Verifica siempre las fuentes citadas.
                 </p>
               </div>
             </>
