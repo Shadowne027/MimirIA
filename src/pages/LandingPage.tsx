@@ -451,7 +451,7 @@ function AboutMimiria() {
               <h3 className="font-display text-xl font-semibold tracking-tight text-[var(--text)]">Tecnología</h3>
             </div>
             <p className="text-sm leading-relaxed text-[var(--text-2)]">
-              Utiliza <strong className="font-semibold text-[var(--text)]">GPT-5-mini y GPT-5-nano de OpenAI</strong> con enrutamiento inteligente que selecciona el modelo óptimo según la dificultad de tu pregunta, ahorrando recursos sin sacrificar calidad.
+              Utiliza <strong className="font-semibold text-[var(--text)]">GPT-4o y GPT-4o-mini de OpenAI</strong> con enrutamiento inteligente que selecciona el modelo óptimo según la dificultad de tu pregunta, ahorrando recursos sin sacrificar calidad.
             </p>
           </div>
 
@@ -857,7 +857,7 @@ function FAQ() {
   const faqs = [
     { q: "¿MIMIR IA es realmente gratuito para los estudiantes?", a: "Sí. El proyecto nació en el SENA con vocación de impacto social. La plataforma es de acceso libre para estudiantes de la institución y, en su fase abierta, para cualquier estudiante hispanohablante." },
     { q: "¿Necesito una cuenta para usar MIMIR?", a: "Sí. Al registrarte recibes un ID único (por ejemplo #001) que se guarda en la base de datos y vincula todo tu historial de conversaciones, para que puedas volver a ellas cuando quieras." },
-    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza GPT-5-mini y GPT-5-nano de OpenAI con un sistema inteligente de enrutamiento que selecciona el modelo óptimo según la dificultad de tu pregunta. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
+    { q: "¿De dónde saca la información MIMIR?", a: "MIMIR utiliza GPT-4o y GPT-4o-mini de OpenAI con un sistema inteligente de enrutamiento que selecciona el modelo óptimo según la dificultad de tu pregunta. En cada respuesta, te indica las fuentes (Wikipedia, sitios .edu, .gov, MDN, Khan Academy, entre otros) para que puedas verificar la información." },
     { q: "¿Reemplaza a un profesor?", a: "No. MIMIR es un complemento: explica conceptos, da ejemplos y propone rutas de estudio. El acompañamiento docente sigue siendo irremplazable. Nuestra meta es reducir su carga repetitiva, no eliminar su rol." },
     { q: "¿Qué tan precisa es la información?", a: "MIMIR puede cometer errores como cualquier IA. Por eso siempre citamos fuentes: para que el estudiante desarrolle pensamiento crítico verificándolas. Esa es justamente la habilidad que queremos fomentar." },
     { q: "¿Mis datos están seguros?", a: "Cumplimos con la Ley 1581 de 2012 de Protección de Datos Personales. No vendemos tus datos. Las contraseñas se guardan encriptadas y las conversaciones se usan únicamente para mejorar tu experiencia." },

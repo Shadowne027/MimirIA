@@ -7,7 +7,7 @@ La app está lista para subir a Vercel tal como está:
   - `api/register.js` — crea la cuenta y asigna el **ID correlativo en MongoDB** (`#001`, `#002`, …).
   - `api/login.js` / `api/me.js` — sesión con token firmado.
   - `api/conversations.js` — historial de conversaciones por usuario (MongoDB).
-  - `api/chat.js` — responde con **GPT-5-mini y GPT-5-nano** (OpenAI) usando enrutamiento inteligente según la dificultad de la pregunta, y guarda cada mensaje.
+  - `api/chat.js` — responde con **GPT-4o y GPT-4o-mini** (OpenAI) usando enrutamiento inteligente según la dificultad de la pregunta, y guarda cada mensaje.
 
 ## 1. MongoDB Atlas
 
@@ -20,10 +20,10 @@ La app está lista para subir a Vercel tal como está:
 La base `mimiria` y las colecciones (`users`, `conversations`, `counters`) se crean solas al primer uso.
 El contador de IDs vive en `counters` → cada registro nuevo recibe el siguiente número (`#001`, `#002`, …).
 
-## 2. OpenAI (GPT-5-mini y GPT-5-nano)
+## 2. OpenAI (GPT-4o y GPT-4o-mini)
 
 1. Entra a [platform.openai.com/api-keys](https://platform.openai.com/api-keys) y crea una API key.
-2. Verifica que tu cuenta tenga acceso a los modelos `gpt-5-mini` y `gpt-5-nano`.
+2. Verifica que tu cuenta tenga acceso a los modelos `gpt-4o` y `gpt-4o-mini`.
 3. Agrega créditos a tu cuenta (mínimo $5 USD para empezar).
 
 ## 3. Vercel
@@ -63,7 +63,7 @@ El contador de IDs vive en `counters` → cada registro nuevo recibe el siguient
 5. **La IA responde un error de OpenAI** → el chat ahora muestra el mensaje exacto:
    - `401 Incorrect API key` → la clave está mal copiada (sobran espacios, falta un trozo).
    - `429 / quota` → la cuenta de OpenAI no tiene saldo o excedió el límite.
-   - `model_not_found` → tu cuenta aún no tiene acceso a `gpt-5-mini` o `gpt-5-nano`.
+   - `model_not_found` → tu cuenta aún no tiene acceso a `gpt-4o` o `gpt-4o-mini`.
 6. **Los nombres de las variables deben ser exactos:** `MONGODB_URI`, `OPENAI_API_KEY`,
    `TOKEN_SECRET` — sin espacios antes/después de la `=` ni de los valores.
 
@@ -77,7 +77,7 @@ api/                ← funciones serverless (Node 20)
   login.js          ← POST  /api/login
   me.js             ← GET   /api/me
   conversations.js  ← GET/POST/DELETE /api/conversations
-  chat.js           ← POST  /api/chat       → GPT-5-mini/nano (enrutamiento inteligente) + historial
+  chat.js           ← POST  /api/chat       → GPT-4o/4o-mini (enrutamiento inteligente) + historial
 src/lib/api.ts      ← cliente del frontend (API real con caída a modo demo)
 vercel.json         ← SPA rewrites + configuración de funciones
 ```

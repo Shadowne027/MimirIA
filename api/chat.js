@@ -4,8 +4,8 @@ import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_li
 /**
  * POST /api/chat  { conversationId, message }
  * Sistema inteligente de enrutamiento:
- * - Preguntas simples → gpt-5-nano (más económico)
- * - Preguntas complejas → gpt-5-mini (más capaz)
+ * - Preguntas simples → gpt-4o-mini (más económico)
+ * - Preguntas complejas → gpt-4o (más capaz)
  */
 
 function classifyDifficulty(message) {
@@ -26,13 +26,16 @@ function classifyDifficulty(message) {
 }
 
 function selectModel(difficulty) {
-  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
+  // gpt-4o-mini para simples (económico), gpt-4o para complejas (capaz)
+  return difficulty === 'simple' ? 'gpt-4o-mini' : 'gpt-4o';
 }
 
 async function callOpenAI(messages, model, maxRetries = 2) {
   console.log(`[CHAT] Usando modelo: ${model}`);
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    console.log(`[CHAT] Intento ${attempt + 1} de ${maxRetries + 1}`);
+    
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -47,14 +50,21 @@ async function callOpenAI(messages, model, maxRetries = 2) {
       }),
     });
 
+    console.log('[CHAT] Status de OpenAI:', aiRes.status);
+
     if (aiRes.ok) {
-      return await aiRes.json();
+      const data = await aiRes.json();
+      console.log(`[CHAT] Respuesta recibida de ${model}`);
+      return data;
     }
 
     const errBody = await aiRes.json().catch(() => ({}));
     const errMsg = errBody?.error?.message || "";
+    
+    console.log('[CHAT] Error de OpenAI:', errMsg);
 
     if ((aiRes.status === 429 || aiRes.status === 503) && attempt < maxRetries) {
+      console.log(`[CHAT] Reintentando en ${2000 * (attempt + 1)}ms...`);
       await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
       continue;
     }
@@ -164,10 +174,13 @@ export default async function handler(req, res) {
     try {
       ai = await callOpenAI(openaiMessages, model);
     } catch (e) {
+      console.error('[CHAT] Error de OpenAI:', e.message);
       return send(res, 502, { error: `Error de IA: ${e.message}`, details: e.message });
     }
 
     const raw = ai.choices?.[0]?.message?.content || "";
+    console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
+    
     let parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
 
     const replyText = String(parsed.text || raw || "No logré formular una respuesta.");
@@ -195,6 +208,7 @@ export default async function handler(req, res) {
       }
     );
 
+    console.log('[CHAT] Respuesta enviada exitosamente');
     return send(res, 200, { text: replyText, sources, followups });
   } catch (e) {
     console.error('[CHAT] Error:', e);
