@@ -355,7 +355,7 @@ export default function ChatPage() {
                 {health?.ok ? (
                   <>
                     <Wifi size={12} className="text-[var(--brand-text)]" />
-                    <span>Conectado · GPT-4o + MongoDB</span>
+                    <span>Conectado · GPT-5 + MongoDB</span>
                   </>
                 ) : (
                   <>

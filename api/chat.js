@@ -3,11 +3,16 @@ import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_li
 
 /**
  * POST /api/chat  { conversationId, message }
- * Sistema inteligente de enrutamiento:
- * - Preguntas simples → gpt-4o-mini (más económico)
- * - Preguntas complejas → gpt-4o (más capaz)
+ * Sistema inteligente con caché:
+ * 1. Busca en caché preguntas similares
+ * 2. Si encuentra caché → devuelve respuesta guardada (sin costo)
+ * 3. Si no encuentra → clasifica dificultad y consulta IA
+ * 4. Guarda respuesta en caché para futuras consultas
  */
 
+/**
+ * Clasifica la dificultad de una pregunta
+ */
 function classifyDifficulty(message) {
   const msg = message.toLowerCase();
   const len = message.length;
@@ -25,11 +30,113 @@ function classifyDifficulty(message) {
   return 'medium';
 }
 
+/**
+ * Selecciona el modelo según la dificultad
+ * - Simple → gpt-5-nano (más económico)
+ * - Media/Compleja → gpt-5-mini (más capaz)
+ */
 function selectModel(difficulty) {
-  // gpt-4o-mini para simples (económico), gpt-4o para complejas (capaz)
-  return difficulty === 'simple' ? 'gpt-4o-mini' : 'gpt-4o';
+  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
 }
 
+/**
+ * Normaliza texto para comparación (quita acentos, minúsculas, espacios extra)
+ */
+function normalizeText(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Quitar acentos
+    .replace(/[^\w\s]/g, '') // Quitar signos de puntuación
+    .replace(/\s+/g, ' ') // Espacios múltiples a uno solo
+    .trim();
+}
+
+/**
+ * Calcula similitud entre dos textos (Jaccard similarity)
+ */
+function calculateSimilarity(text1, text2) {
+  const words1 = new Set(normalizeText(text1).split(' '));
+  const words2 = new Set(normalizeText(text2).split(' '));
+  
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+  
+  return intersection.size / union.size;
+}
+
+/**
+ * Busca en caché una pregunta similar
+ */
+async function searchCache(db, message) {
+  try {
+    const cache = db.collection('cache');
+    
+    // Buscar todas las entradas de caché
+    const allCache = await cache.find({}).toArray();
+    
+    if (allCache.length === 0) return null;
+    
+    // Buscar la más similar
+    let bestMatch = null;
+    let bestSimilarity = 0;
+    const threshold = 0.6; // 60% de similitud mínima
+    
+    for (const entry of allCache) {
+      const similarity = calculateSimilarity(message, entry.question);
+      
+      if (similarity > bestSimilarity && similarity >= threshold) {
+        bestSimilarity = similarity;
+        bestMatch = entry;
+      }
+    }
+    
+    if (bestMatch) {
+      console.log(`[CACHE] Encontrada con similitud: ${(bestSimilarity * 100).toFixed(1)}%`);
+      
+      // Actualizar contador de uso
+      await cache.updateOne(
+        { _id: bestMatch._id },
+        { $inc: { useCount: 1 }, $set: { lastUsed: Date.now() } }
+      );
+      
+      return bestMatch;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('[CACHE] Error buscando en caché:', error);
+    return null;
+  }
+}
+
+/**
+ * Guarda una respuesta en caché
+ */
+async function saveToCache(db, question, answer, sources, followups) {
+  try {
+    const cache = db.collection('cache');
+    
+    await cache.insertOne({
+      question: normalizeText(question),
+      originalQuestion: question,
+      answer,
+      sources: sources || [],
+      followups: followups || [],
+      createdAt: Date.now(),
+      lastUsed: Date.now(),
+      useCount: 1
+    });
+    
+    console.log('[CACHE] Respuesta guardada en caché');
+  } catch (error) {
+    console.error('[CACHE] Error guardando en caché:', error);
+  }
+}
+
+/**
+ * Llama a OpenAI con retry automático
+ */
 async function callOpenAI(messages, model, maxRetries = 2) {
   console.log(`[CHAT] Usando modelo: ${model}`);
   
@@ -73,6 +180,9 @@ async function callOpenAI(messages, model, maxRetries = 2) {
   }
 }
 
+/**
+ * Extrae JSON de la respuesta
+ */
 function extractJson(raw) {
   if (!raw || typeof raw !== "string") return null;
   let text = raw.trim();
@@ -147,69 +257,91 @@ export default async function handler(req, res) {
     const text = String(message || "").trim();
     if (!text) return send(res, 400, { error: "Escribe un mensaje." });
 
-    // Clasificar dificultad y seleccionar modelo
-    const difficulty = classifyDifficulty(text);
-    const model = selectModel(difficulty);
-    console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
-
     const db = await getDb();
-    const col = db.collection("conversations");
-
-    let convo = null;
-    try {
-      convo = await col.findOne({ _id: new ObjectId(String(conversationId)), userId: user.userId });
-    } catch { convo = null; }
     
-    if (!convo) return send(res, 404, { error: "Conversación no encontrada." });
+    // PASO 1: Buscar en caché
+    console.log('[CHAT] Buscando en caché...');
+    const cached = await searchCache(db, text);
+    
+    let replyText, sources, followups;
+    
+    if (cached) {
+      // Usar respuesta de caché
+      console.log('[CHAT] ✅ Usando respuesta de caché');
+      replyText = cached.answer;
+      sources = cached.sources;
+      followups = cached.followups;
+    } else {
+      // PASO 2: No hay caché, consultar IA
+      console.log('[CHAT] ❌ No hay caché, consultando IA...');
+      
+      const difficulty = classifyDifficulty(text);
+      const model = selectModel(difficulty);
+      console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
 
-    const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
+      const col = db.collection("conversations");
 
-    const openaiMessages = [
-      { role: "system", content: SYSTEM_PROMPT },
-      ...history,
-      { role: "user", content: text },
-    ];
+      let convo = null;
+      try {
+        convo = await col.findOne({ _id: new ObjectId(String(conversationId)), userId: user.userId });
+      } catch { convo = null; }
+      
+      if (!convo) return send(res, 404, { error: "Conversación no encontrada." });
 
-    let ai;
-    try {
-      ai = await callOpenAI(openaiMessages, model);
-    } catch (e) {
-      console.error('[CHAT] Error de OpenAI:', e.message);
-      return send(res, 502, { error: `Error de IA: ${e.message}`, details: e.message });
+      const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
+
+      const openaiMessages = [
+        { role: "system", content: SYSTEM_PROMPT },
+        ...history,
+        { role: "user", content: text },
+      ];
+
+      let ai;
+      try {
+        ai = await callOpenAI(openaiMessages, model);
+      } catch (e) {
+        console.error('[CHAT] Error de OpenAI:', e.message);
+        return send(res, 502, { error: `Error de IA: ${e.message}`, details: e.message });
+      }
+
+      const raw = ai.choices?.[0]?.message?.content || "";
+      console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
+      
+      const parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
+
+      replyText = String(parsed.text || raw || "No logré formular una respuesta.");
+      sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
+      followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
+      
+      // PASO 3: Guardar en caché para futuras consultas
+      console.log('[CHAT] Guardando respuesta en caché...');
+      await saveToCache(db, text, replyText, sources, followups);
+      
+      // Guardar en historial de conversación
+      const now = Date.now();
+      const isFirstExchange = (convo.messages || []).length === 0;
+      
+      await col.updateOne(
+        { _id: convo._id },
+        {
+          $push: {
+            messages: {
+              $each: [
+                { role: "user", content: text, at: now },
+                { role: "assistant", content: replyText, sources, followUps: followups, at: now },
+              ],
+            },
+          },
+          $set: {
+            updatedAt: now,
+            ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {}),
+          },
+        }
+      );
     }
 
-    const raw = ai.choices?.[0]?.message?.content || "";
-    console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
-    
-    let parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
-
-    const replyText = String(parsed.text || raw || "No logré formular una respuesta.");
-    const sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
-    const followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
-
-    const now = Date.now();
-    const isFirstExchange = (convo.messages || []).length === 0;
-    
-    await col.updateOne(
-      { _id: convo._id },
-      {
-        $push: {
-          messages: {
-            $each: [
-              { role: "user", content: text, at: now },
-              { role: "assistant", content: replyText, sources, followUps: followups, at: now },
-            ],
-          },
-        },
-        $set: {
-          updatedAt: now,
-          ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {}),
-        },
-      }
-    );
-
-    console.log('[CHAT] Respuesta enviada exitosamente');
-    return send(res, 200, { text: replyText, sources, followups });
+    console.log('[CHAT] ✅ Respuesta enviada exitosamente');
+    return send(res, 200, { text: replyText, sources, followups, fromCache: !!cached });
   } catch (e) {
     console.error('[CHAT] Error:', e);
     return send(res, 500, { error: "Error interno.", details: e.message });
