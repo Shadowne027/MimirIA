@@ -1,49 +1,111 @@
 import crypto from "node:crypto";
-import { getDb, hashPassword, signToken, send, readBody, displayId, nextUserId, mongoHint, preflight } from "./_lib.js";
 
-/**
- * POST /api/register  { username, password }
- * Crea el usuario en MongoDB y le asigna un ID correlativo (#001, #002…).
- */
 export default async function handler(req, res) {
-  if (preflight(req, res)) return;
-  if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
+
   try {
-    const { username, password } = await readBody(req);
-    const uname = String(username || "").trim();
-    if (uname.length < 2) return send(res, 400, { error: "El nombre de usuario debe tener al menos 2 caracteres." });
-    if (String(password || "").length < 6) return send(res, 400, { error: "La contraseña debe tener al menos 6 caracteres." });
+    console.log('[REGISTER] Iniciando registro...');
+    
+    // Parsear body
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+    }
+    const { username, password } = JSON.parse(body);
+    
+    console.log('[REGISTER] Usuario:', username);
+    
+    if (!username || username.trim().length < 2) {
+      return res.status(400).json({ error: 'El nombre de usuario debe tener al menos 2 caracteres.' });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
+    }
 
-    const db = await getDb();
-    const users = db.collection("users");
+    // Conectar a MongoDB
+    const { MongoClient } = await import('mongodb');
+    console.log('[REGISTER] Conectando a MongoDB...');
+    
+    const client = await MongoClient.connect(process.env.MONGODB_URI);
+    const db = client.db('mimiria');
+    
+    console.log('[REGISTER] Conectado. Verificando usuario existente...');
+    
+    // Verificar si el usuario ya existe
+    const users = db.collection('users');
+    const exists = await users.findOne({ usernameLower: username.toLowerCase() });
+    
+    if (exists) {
+      await client.close();
+      return res.status(409).json({ error: 'Ese nombre de usuario ya está registrado.' });
+    }
 
-    const exists = await users.findOne({ usernameLower: uname.toLowerCase() });
-    if (exists) return send(res, 409, { error: "Ese nombre de usuario ya está registrado." });
-
-    const n = await nextUserId(db);
-    const salt = crypto.randomBytes(16).toString("hex");
-    const now = Date.now();
-
+    console.log('[REGISTER] Usuario no existe. Obteniendo siguiente ID...');
+    
+    // Obtener siguiente ID (simplificado)
+    const counters = db.collection('counters');
+    const result = await counters.findOneAndUpdate(
+      { _id: 'users' },
+      { $inc: { seq: 1 } },
+      { upsert: true, returnDocument: 'after' }
+    );
+    
+    const userId = result?.value?.seq || result?.seq || 1;
+    const displayId = `#${String(userId).padStart(3, '0')}`;
+    
+    console.log('[REGISTER] ID asignado:', displayId);
+    
+    // Crear hash de contraseña
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
+    
+    console.log('[REGISTER] Insertando usuario...');
+    
+    // Insertar usuario
     await users.insertOne({
-      userId: n,
-      displayId: displayId(n),
-      username: uname,
-      usernameLower: uname.toLowerCase(),
+      userId,
+      displayId,
+      username: username.trim(),
+      usernameLower: username.toLowerCase(),
       salt,
-      passwordHash: hashPassword(password, salt),
-      createdAt: now,
+      passwordHash,
+      createdAt: Date.now(),
     });
-
-    const token = signToken({ userId: n, username: uname });
-    return send(res, 201, {
-      user: { userId: n, id: displayId(n), username: uname, token },
+    
+    console.log('[REGISTER] Usuario insertado. Creando token...');
+    
+    // Crear token simple
+    const token = Buffer.from(JSON.stringify({
+      userId,
+      username: username.trim(),
+      exp: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 días
+    })).toString('base64');
+    
+    await client.close();
+    
+    console.log('[REGISTER] Registro completado exitosamente');
+    
+    return res.status(201).json({
+      user: {
+        userId,
+        id: displayId,
+        username: username.trim(),
+        token
+      }
     });
-  } catch (e) {
-    console.error('Error en register:', e);
-    return send(res, 500, { 
+    
+  } catch (error) {
+    console.error('[REGISTER] Error:', error);
+    return res.status(500).json({
       error: 'Error al crear cuenta',
-      details: e.message || 'Error desconocido',
-      code: e.code || null
+      details: error.message || 'Error desconocido',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 }

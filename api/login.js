@@ -1,26 +1,86 @@
-import { getDb, hashPassword, signToken, send, readBody, displayId, mongoHint, preflight } from "./_lib.js";
+import crypto from "node:crypto";
 
-/** POST /api/login  { username, password } */
 export default async function handler(req, res) {
-  if (preflight(req, res)) return;
-  if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
+  // CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Método no permitido' });
+
   try {
-    const { username, password } = await readBody(req);
-    const uname = String(username || "").trim();
-    if (!uname || !password) return send(res, 400, { error: "Escribe tu usuario y tu contraseña." });
+    console.log('[LOGIN] Iniciando login...');
+    
+    // Parsear body
+    let body = '';
+    for await (const chunk of req) {
+      body += chunk;
+    }
+    const { username, password } = JSON.parse(body);
+    
+    console.log('[LOGIN] Usuario:', username);
+    
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Escribe tu usuario y tu contraseña.' });
+    }
 
-    const db = await getDb();
-    const user = await db.collection("users").findOne({ usernameLower: uname.toLowerCase() });
-    if (!user) return send(res, 401, { error: "Usuario o contraseña incorrectos." });
+    // Conectar a MongoDB
+    const { MongoClient } = await import('mongodb');
+    console.log('[LOGIN] Conectando a MongoDB...');
+    
+    const client = await MongoClient.connect(process.env.MONGODB_URI);
+    const db = client.db('mimiria');
+    const users = db.collection('users');
+    
+    console.log('[LOGIN] Buscando usuario...');
+    
+    // Buscar usuario
+    const user = await users.findOne({ usernameLower: username.toLowerCase() });
+    
+    if (!user) {
+      await client.close();
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+    }
 
-    const hash = hashPassword(password, user.salt);
-    if (hash !== user.passwordHash) return send(res, 401, { error: "Usuario o contraseña incorrectos." });
+    console.log('[LOGIN] Usuario encontrado. Verificando contraseña...');
+    
+    // Verificar contraseña
+    const hash = crypto.scryptSync(password, user.salt, 64).toString('hex');
+    
+    if (hash !== user.passwordHash) {
+      await client.close();
+      return res.status(401).json({ error: 'Usuario o contraseña incorrectos.' });
+    }
 
-    const token = signToken({ userId: user.userId, username: user.username });
-    return send(res, 200, {
-      user: { userId: user.userId, id: displayId(user.userId), username: user.username, token },
+    console.log('[LOGIN] Contraseña correcta. Creando token...');
+    
+    // Crear token simple
+    const token = Buffer.from(JSON.stringify({
+      userId: user.userId,
+      username: user.username,
+      exp: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 días
+    })).toString('base64');
+    
+    await client.close();
+    
+    console.log('[LOGIN] Login completado exitosamente');
+    
+    return res.status(200).json({
+      user: {
+        userId: user.userId,
+        id: user.displayId,
+        username: user.username,
+        token
+      }
     });
-  } catch (e) {
-    return send(res, 500, { error: mongoHint(e) });
+    
+  } catch (error) {
+    console.error('[LOGIN] Error:', error);
+    return res.status(500).json({
+      error: 'Error al iniciar sesión',
+      details: error.message || 'Error desconocido',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 }
