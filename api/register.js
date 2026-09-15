@@ -39,6 +39,11 @@ export default async function handler(req, res) {
       user: { userId: n, id: displayId(n), username: uname, token },
     });
   } catch (e) {
-    return send(res, 500, { error: mongoHint(e) });
+    console.error('Error en register:', e);
+    return send(res, 500, { 
+      error: 'Error al crear cuenta',
+      details: e.message || 'Error desconocido',
+      code: e.code || null
+    });
   }
 }
