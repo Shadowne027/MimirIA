@@ -55,12 +55,12 @@ export default async function handler(req, res) {
 
     console.log('[LOGIN] Contraseña correcta. Creando token...');
     
-    // Crear token simple
-    const token = Buffer.from(JSON.stringify({
-      userId: user.userId,
-      username: user.username,
-      exp: Date.now() + 30 * 24 * 60 * 60 * 1000 // 30 días
-    })).toString('base64');
+    // Crear token con firma HMAC
+    const tokenPayload = { userId: user.userId, username: user.username };
+    const tokenBody = Buffer.from(JSON.stringify(tokenPayload)).toString('base64url');
+    const tokenSecret = process.env.TOKEN_SECRET || 'mimiria-dev-secret';
+    const tokenSig = crypto.createHmac('sha256', tokenSecret).update(tokenBody).digest('base64url');
+    const token = `${tokenBody}.${tokenSig}`;
     
     await client.close();
     
