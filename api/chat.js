@@ -501,7 +501,10 @@ export default async function handler(req, res) {
 
       let ai;
       try {
+        console.log('[CHAT] Llamando a OpenAI con modelo:', model);
+        console.log('[CHAT] Número de mensajes:', openaiMessages.length);
         ai = await callOpenAI(openaiMessages, model);
+        console.log('[CHAT] Respuesta completa de OpenAI recibida');
       } catch (e) {
         console.error('[CHAT] Error de OpenAI:', e.message);
         console.error('[CHAT] Stack:', e.stack);
@@ -513,14 +516,21 @@ export default async function handler(req, res) {
         });
       }
 
+      console.log('[CHAT] Procesando respuesta de OpenAI...');
       const raw = ai.choices?.[0]?.message?.content || "";
       console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
+      console.log('[CHAT] Primeros 200 caracteres:', raw.substring(0, 200));
       
       const parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
+      console.log('[CHAT] JSON parseado:', JSON.stringify(parsed).substring(0, 200));
 
       replyText = String(parsed.text || raw || "No logré formular una respuesta.");
       sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
       followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
+      
+      console.log('[CHAT] Respuesta final - Texto longitud:', replyText.length);
+      console.log('[CHAT] Respuesta final - Fuentes:', sources.length);
+      console.log('[CHAT] Respuesta final - Followups:', followups.length);
       
       // PASO 3: Guardar en caché (solo si no hay imágenes ni documentos)
       if (images.length === 0 && documents.length === 0) {
@@ -564,9 +574,17 @@ export default async function handler(req, res) {
     }
 
     console.log('[CHAT] ✅ Respuesta enviada exitosamente');
+    console.log('[CHAT] Enviando respuesta al frontend:', { 
+      textLength: replyText.length, 
+      sourcesCount: sources.length, 
+      followupsCount: followups.length,
+      fromCache: !!cached 
+    });
     return send(res, 200, { text: replyText, sources, followups, fromCache: !!cached });
   } catch (e) {
-    console.error('[CHAT] Error:', e);
-    return send(res, 500, { error: "Error interno.", details: e.message });
+    console.error('[CHAT] Error general:', e);
+    console.error('[CHAT] Error stack:', e.stack);
+    console.error('[CHAT] Error message:', e.message);
+    return send(res, 500, { error: "Error interno.", details: e.message, stack: e.stack });
   }
 }
