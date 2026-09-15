@@ -1,21 +1,111 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_lib.js";
+import { getDb, authUser, send, SYSTEM_PROMPT, preflight } from "./_lib.js";
+import formidable from "formidable";
+import fs from "fs";
 
 /**
- * POST /api/chat  { conversationId, message }
- * Sistema inteligente con caché:
- * 1. Busca en caché preguntas similares
+ * POST /api/chat  { conversationId, message, files? }
+ * Sistema inteligente con caché y soporte de imágenes:
+ * 1. Busca en caché preguntas similares (solo texto)
  * 2. Si encuentra caché → devuelve respuesta guardada (sin costo)
  * 3. Si no encuentra → clasifica dificultad y consulta IA
  * 4. Guarda respuesta en caché para futuras consultas
+ * 
+ * Soporta imágenes: JPG, PNG, GIF, WebP (hasta 20MB)
  */
+
+// Configuración de formidable para Vercel serverless
+const form = formidable({
+  maxFileSize: 20 * 1024 * 1024, // 20MB
+  maxFiles: 5,
+  keepExtensions: false,
+});
+
+/**
+ * Parsea multipart/form-data
+ */
+function parseForm(req) {
+  return new Promise((resolve, reject) => {
+    form.parse(req, (err, fields, files) => {
+      if (err) reject(err);
+      else resolve({ fields, files });
+    });
+  });
+}
+
+/**
+ * Lee el body como JSON o multipart
+ */
+async function readBody(req) {
+  const contentType = req.headers["content-type"] || "";
+  
+  if (contentType.includes("multipart/form-data")) {
+    const { fields, files } = await parseForm(req);
+    
+    // Extraer valores de fields (pueden ser arrays)
+    const conversationId = Array.isArray(fields.conversationId) 
+      ? fields.conversationId[0] 
+      : fields.conversationId;
+    const message = Array.isArray(fields.message) 
+      ? fields.message[0] 
+      : fields.message;
+    
+    // Procesar archivos
+    const imageFiles = [];
+    const filesArray = files.files || [];
+    const filesToProcess = Array.isArray(filesArray) ? filesArray : [filesArray];
+    
+    for (const file of filesToProcess) {
+      if (!file || !file.filepath) continue;
+      
+      // Solo aceptar imágenes
+      if (!file.mimetype?.startsWith("image/")) {
+        fs.unlink(file.filepath, () => {});
+        continue;
+      }
+      
+      try {
+        const buffer = fs.readFileSync(file.filepath);
+        const base64 = buffer.toString("base64");
+        imageFiles.push({
+          base64,
+          mimeType: file.mimetype,
+          name: file.originalFilename || "image.jpg"
+        });
+      } catch (e) {
+        console.error("[FILES] Error leyendo archivo:", e);
+      } finally {
+        fs.unlink(file.filepath, () => {});
+      }
+    }
+    
+    return { conversationId, message, images: imageFiles };
+  } else {
+    // JSON tradicional
+    return new Promise((resolve) => {
+      let data = "";
+      req.on("data", (chunk) => (data += chunk));
+      req.on("end", () => {
+        try {
+          const parsed = JSON.parse(data || "{}");
+          resolve({ ...parsed, images: [] });
+        } catch {
+          resolve({ conversationId: null, message: "", images: [] });
+        }
+      });
+    });
+  }
+}
 
 /**
  * Clasifica la dificultad de una pregunta
  */
-function classifyDifficulty(message) {
+function classifyDifficulty(message, hasImages = false) {
   const msg = message.toLowerCase();
   const len = message.length;
+  
+  // Si hay imágenes, es más complejo (análisis visual)
+  if (hasImages) return 'complex';
   
   // Compleja: código, matemáticas avanzadas, análisis profundo
   if (/código|program|función|algoritmo|ecuaci|derivad|integral|cálculo|físic|quím|analiz|compar|ensay|tesis/i.test(msg) || len > 200) {
@@ -66,18 +156,18 @@ function calculateSimilarity(text1, text2) {
 }
 
 /**
- * Busca en caché una pregunta similar
+ * Busca en caché una pregunta similar (solo si no hay imágenes)
  */
-async function searchCache(db, message) {
+async function searchCache(db, message, hasImages = false) {
+  // No buscar en caché si hay imágenes (cada imagen es única)
+  if (hasImages) return null;
+  
   try {
     const cache = db.collection('cache');
-    
-    // Buscar todas las entradas de caché
     const allCache = await cache.find({}).toArray();
     
     if (allCache.length === 0) return null;
     
-    // Buscar la más similar
     let bestMatch = null;
     let bestSimilarity = 0;
     const threshold = 0.6; // 60% de similitud mínima
@@ -94,7 +184,6 @@ async function searchCache(db, message) {
     if (bestMatch) {
       console.log(`[CACHE] Encontrada con similitud: ${(bestSimilarity * 100).toFixed(1)}%`);
       
-      // Actualizar contador de uso
       await cache.updateOne(
         { _id: bestMatch._id },
         { $inc: { useCount: 1 }, $set: { lastUsed: Date.now() } }
@@ -151,7 +240,7 @@ async function callOpenAI(messages, model, maxRetries = 2) {
       max_tokens: 2048,
     };
     
-    console.log('[CHAT] Request body:', JSON.stringify(requestBody, null, 2));
+    console.log('[CHAT] Enviando request a OpenAI...');
     
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -184,7 +273,6 @@ async function callOpenAI(messages, model, maxRetries = 2) {
       continue;
     }
 
-    // Mensajes de error más descriptivos
     let errorDetail = errMsg || `OpenAI respondió ${aiRes.status}`;
     if (aiRes.status === 401) {
       errorDetail = 'API key inválida o expirada. Verifica tu OPENAI_API_KEY en Vercel.';
@@ -271,15 +359,21 @@ export default async function handler(req, res) {
     const user = await authUser(req);
     if (!user) return send(res, 401, { error: "Sesión inválida." });
 
-    const { conversationId, message } = await readBody(req);
+    const { conversationId, message, images } = await readBody(req);
     const text = String(message || "").trim();
-    if (!text) return send(res, 400, { error: "Escribe un mensaje." });
+    
+    if (!text && images.length === 0) {
+      return send(res, 400, { error: "Escribe un mensaje o adjunta una imagen." });
+    }
+
+    console.log(`[CHAT] Mensaje: ${text.substring(0, 50)}...`);
+    console.log(`[CHAT] Imágenes: ${images.length}`);
 
     const db = await getDb();
     
-    // PASO 1: Buscar en caché
+    // PASO 1: Buscar en caché (solo si no hay imágenes)
     console.log('[CHAT] Buscando en caché...');
-    const cached = await searchCache(db, text);
+    const cached = await searchCache(db, text, images.length > 0);
     
     let replyText, sources, followups;
     
@@ -293,7 +387,7 @@ export default async function handler(req, res) {
       // PASO 2: No hay caché, consultar IA
       console.log('[CHAT] ❌ No hay caché, consultando IA...');
       
-      const difficulty = classifyDifficulty(text);
+      const difficulty = classifyDifficulty(text, images.length > 0);
       const model = selectModel(difficulty);
       console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
 
@@ -308,10 +402,31 @@ export default async function handler(req, res) {
 
       const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
 
+      // Construir el mensaje del usuario con texto e imágenes
+      let userContent;
+      if (images.length > 0) {
+        // Formato multimodal para OpenAI
+        userContent = [
+          { type: "text", text: text || "¿Qué ves en esta imagen?" }
+        ];
+        
+        for (const img of images) {
+          userContent.push({
+            type: "image_url",
+            image_url: {
+              url: `data:${img.mimeType};base64,${img.base64}`,
+              detail: "auto"
+            }
+          });
+        }
+      } else {
+        userContent = text;
+      }
+
       const openaiMessages = [
         { role: "system", content: SYSTEM_PROMPT },
         ...history,
-        { role: "user", content: text },
+        { role: "user", content: userContent },
       ];
 
       let ai;
@@ -337,13 +452,18 @@ export default async function handler(req, res) {
       sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
       followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
       
-      // PASO 3: Guardar en caché para futuras consultas
-      console.log('[CHAT] Guardando respuesta en caché...');
-      await saveToCache(db, text, replyText, sources, followups);
+      // PASO 3: Guardar en caché (solo si no hay imágenes)
+      if (images.length === 0) {
+        console.log('[CHAT] Guardando respuesta en caché...');
+        await saveToCache(db, text, replyText, sources, followups);
+      }
       
       // Guardar en historial de conversación
       const now = Date.now();
       const isFirstExchange = (convo.messages || []).length === 0;
+      const userMessageContent = images.length > 0 
+        ? `${text || '[Imagen]'} (${images.length} imagen${images.length > 1 ? 'es' : ''})`
+        : text;
       
       await col.updateOne(
         { _id: convo._id },
@@ -351,14 +471,14 @@ export default async function handler(req, res) {
           $push: {
             messages: {
               $each: [
-                { role: "user", content: text, at: now },
+                { role: "user", content: userMessageContent, at: now },
                 { role: "assistant", content: replyText, sources, followUps: followups, at: now },
               ],
             },
           },
           $set: {
             updatedAt: now,
-            ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {}),
+            ...(isFirstExchange ? { title: (text || "Análisis de imagen").slice(0, 48) + ((text || "Análisis de imagen").length > 48 ? "…" : "") } : {}),
           },
         }
       );
