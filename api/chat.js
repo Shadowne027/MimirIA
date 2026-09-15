@@ -177,11 +177,14 @@ function classifyDifficulty(message, hasImages = false, hasDocuments = false) {
 
 /**
  * Selecciona el modelo según la dificultad
- * - Simple → gpt-4o-mini (más económico)
- * - Media/Compleja → gpt-4o (más capaz)
+ * - Simple → gpt-5-nano (más económico)
+ * - Media/Compleja → gpt-5-mini (más capaz)
+ * 
+ * Nota: Los modelos GPT-5 requieren sufijo de versión específico
  */
 function selectModel(difficulty) {
-  return difficulty === 'simple' ? 'gpt-4o-mini' : 'gpt-4o';
+  // Usar el alias sin versión - OpenAI debería resolver automáticamente a la versión estable
+  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
 }
 
 /**
