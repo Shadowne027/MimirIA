@@ -177,11 +177,11 @@ function classifyDifficulty(message, hasImages = false, hasDocuments = false) {
 
 /**
  * Selecciona el modelo según la dificultad
- * - Simple → gpt-5-nano (más económico)
- * - Media/Compleja → gpt-5-mini (más capaz)
+ * - Simple → gpt-4o-mini (más económico)
+ * - Media/Compleja → gpt-4o (más capaz)
  */
 function selectModel(difficulty) {
-  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
+  return difficulty === 'simple' ? 'gpt-4o-mini' : 'gpt-4o';
 }
 
 /**

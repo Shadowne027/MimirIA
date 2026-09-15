@@ -22,7 +22,7 @@ export default async function handler(req, res) {
       build: 'mimir-v5-openai',
       mongo: false,
       openai: false,
-      model: 'gpt-5-mini + gpt-5-nano',
+      model: 'gpt-4o-mini + gpt-4o',
       errors: []
     };
 
