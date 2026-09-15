@@ -293,6 +293,7 @@ export interface ChatReply {
   text: string;
   sources?: { label: string; url: string }[];
   followUps?: string[];
+  fromCache?: boolean;
 }
 
 export async function sendMessage(

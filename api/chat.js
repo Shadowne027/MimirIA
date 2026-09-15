@@ -1,10 +1,5 @@
 import { ObjectId } from "mongodb";
-import { getDb, authUser, send, SYSTEM_PROMPT, preflight } from "./_lib.js";
-import formidable from "formidable";
-import fs from "fs";
-import pdfParse from "pdf-parse";
-import mammoth from "mammoth";
-import * as XLSX from "xlsx";
+import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_lib.js";
 
 /**
  * POST /api/chat  { conversationId, message, files? }
@@ -17,150 +12,15 @@ import * as XLSX from "xlsx";
  * Soporta imágenes: JPG, PNG, GIF, WebP (hasta 20MB)
  */
 
-// Configuración de formidable para Vercel serverless
-const form = formidable({
-  maxFileSize: 50 * 1024 * 1024, // 50MB para documentos grandes
-  maxFiles: 10, // Más archivos permitidos
-  keepExtensions: true, // Necesario para detectar tipo de archivo
-});
-
-/**
- * Parsea multipart/form-data
- */
-function parseForm(req) {
-  return new Promise((resolve, reject) => {
-    form.parse(req, (err, fields, files) => {
-      if (err) reject(err);
-      else resolve({ fields, files });
-    });
-  });
-}
-
-/**
- * Lee el body como JSON o multipart
- */
-async function readBody(req) {
-  const contentType = req.headers["content-type"] || "";
-  
-  if (contentType.includes("multipart/form-data")) {
-    const { fields, files } = await parseForm(req);
-    
-    // Extraer valores de fields (pueden ser arrays)
-    const conversationId = Array.isArray(fields.conversationId) 
-      ? fields.conversationId[0] 
-      : fields.conversationId;
-    const message = Array.isArray(fields.message) 
-      ? fields.message[0] 
-      : fields.message;
-    
-    // Procesar archivos
-    const imageFiles = [];
-    const documentTexts = [];
-    const filesArray = files.files || [];
-    const filesToProcess = Array.isArray(filesArray) ? filesArray : [filesArray];
-    
-    for (const file of filesToProcess) {
-      if (!file || !file.filepath) continue;
-      
-      const mimetype = file.mimetype || "";
-      const originalName = file.originalFilename || "";
-      const ext = originalName.split('.').pop()?.toLowerCase();
-      
-      try {
-        // Imágenes
-        if (mimetype.startsWith("image/")) {
-          const buffer = fs.readFileSync(file.filepath);
-          const base64 = buffer.toString("base64");
-          imageFiles.push({
-            base64,
-            mimeType: mimetype,
-            name: originalName || "image.jpg"
-          });
-        }
-        // PDFs
-        else if (mimetype === "application/pdf" || ext === "pdf") {
-          const buffer = fs.readFileSync(file.filepath);
-          const pdfData = await pdfParse(buffer);
-          documentTexts.push({
-            text: pdfData.text,
-            name: originalName || "document.pdf",
-            type: "pdf"
-          });
-        }
-        // Word (.docx)
-        else if (mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext === "docx") {
-          const buffer = fs.readFileSync(file.filepath);
-          const result = await mammoth.extractRawText({ buffer });
-          documentTexts.push({
-            text: result.value,
-            name: originalName || "document.docx",
-            type: "word"
-          });
-        }
-        // Excel (.xlsx, .xls)
-        else if (mimetype === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || 
-                 mimetype === "application/vnd.ms-excel" || 
-                 ext === "xlsx" || ext === "xls") {
-          const buffer = fs.readFileSync(file.filepath);
-          const workbook = XLSX.read(buffer, { type: "buffer" });
-          let text = "";
-          workbook.SheetNames.forEach(sheetName => {
-            const sheet = workbook.Sheets[sheetName];
-            text += `\n[Hoja: ${sheetName}]\n`;
-            text += XLSX.utils.sheet_to_csv(sheet);
-          });
-          documentTexts.push({
-            text,
-            name: originalName || "spreadsheet.xlsx",
-            type: "excel"
-          });
-        }
-        // Texto plano
-        else if (mimetype.startsWith("text/") || ["txt", "md", "csv"].includes(ext)) {
-          const text = fs.readFileSync(file.filepath, "utf-8");
-          documentTexts.push({
-            text,
-            name: originalName || "document.txt",
-            type: "text"
-          });
-        }
-        else {
-          console.log(`[FILES] Tipo de archivo no soportado: ${mimetype}`);
-        }
-      } catch (e) {
-        console.error(`[FILES] Error procesando ${originalName}:`, e);
-      } finally {
-        fs.unlink(file.filepath, () => {});
-      }
-    }
-    
-    return { conversationId, message, images: imageFiles, documents: documentTexts };
-  } else {
-    // JSON tradicional
-    return new Promise((resolve) => {
-      let data = "";
-      req.on("data", (chunk) => (data += chunk));
-      req.on("end", () => {
-        try {
-          const parsed = JSON.parse(data || "{}");
-          resolve({ ...parsed, images: [], documents: [] });
-        } catch {
-          resolve({ conversationId: null, message: "", images: [], documents: [] });
-        }
-      });
-    });
-  }
-}
-
 /**
  * Clasifica la dificultad de una pregunta
  */
-function classifyDifficulty(message, hasImages = false, hasDocuments = false) {
+function classifyDifficulty(message, hasImages = false) {
   const msg = message.toLowerCase();
   const len = message.length;
   
-  // Si hay imágenes o documentos, es más complejo (análisis)
-  if (hasImages || hasDocuments) return 'complex';
+  // Si hay imágenes, es más complejo (análisis visual)
+  if (hasImages) return 'complex';
   
   // Compleja: código, matemáticas avanzadas, análisis profundo
   if (/código|program|función|algoritmo|ecuaci|derivad|integral|cálculo|físic|quím|analiz|compar|ensay|tesis/i.test(msg) || len > 200) {
@@ -211,11 +71,11 @@ function calculateSimilarity(text1, text2) {
 }
 
 /**
- * Busca en caché una pregunta similar (solo si no hay imágenes ni documentos)
+ * Busca en caché una pregunta similar (solo si no hay imágenes)
  */
-async function searchCache(db, message, hasImages = false, hasDocuments = false) {
-  // No buscar en caché si hay imágenes o documentos (cada uno es único)
-  if (hasImages || hasDocuments) return null;
+async function searchCache(db, message, hasImages = false) {
+  // No buscar en caché si hay imágenes (cada imagen es única)
+  if (hasImages) return null;
   
   try {
     const cache = db.collection('cache');
@@ -414,22 +274,21 @@ export default async function handler(req, res) {
     const user = await authUser(req);
     if (!user) return send(res, 401, { error: "Sesión inválida." });
 
-    const { conversationId, message, images, documents } = await readBody(req);
+    const { conversationId, message, images } = await readBody(req);
     const text = String(message || "").trim();
     
-    if (!text && images.length === 0 && documents.length === 0) {
-      return send(res, 400, { error: "Escribe un mensaje o adjunta un archivo." });
+    if (!text && images.length === 0) {
+      return send(res, 400, { error: "Escribe un mensaje o adjunta una imagen." });
     }
 
     console.log(`[CHAT] Mensaje: ${text.substring(0, 50)}...`);
     console.log(`[CHAT] Imágenes: ${images.length}`);
-    console.log(`[CHAT] Documentos: ${documents.length}`);
 
     const db = await getDb();
     
-    // PASO 1: Buscar en caché (solo si no hay imágenes ni documentos)
+    // PASO 1: Buscar en caché (solo si no hay imágenes)
     console.log('[CHAT] Buscando en caché...');
-    const cached = await searchCache(db, text, images.length > 0, documents.length > 0);
+    const cached = await searchCache(db, text, images.length > 0);
     
     let replyText, sources, followups;
     
@@ -443,7 +302,7 @@ export default async function handler(req, res) {
       // PASO 2: No hay caché, consultar IA
       console.log('[CHAT] ❌ No hay caché, consultando IA...');
       
-      const difficulty = classifyDifficulty(text, images.length > 0, documents.length > 0);
+      const difficulty = classifyDifficulty(text, images.length > 0);
       const model = selectModel(difficulty);
       console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
 
@@ -458,39 +317,25 @@ export default async function handler(req, res) {
 
       const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
 
-      // Construir el mensaje del usuario con texto, imágenes y documentos
+      // Construir el mensaje del usuario con texto e imágenes
       let userContent;
-      let fullText = text;
-      
-      // Agregar contenido de documentos al texto
-      if (documents.length > 0) {
-        const docContents = documents.map(doc => {
-          const typeLabel = doc.type === "pdf" ? "PDF" : 
-                           doc.type === "word" ? "Word" : 
-                           doc.type === "excel" ? "Excel" : "Texto";
-          return `\n\n[Contenido del archivo ${typeLabel}: ${doc.name}]\n${doc.text}`;
-        }).join("");
-        
-        fullText = text + docContents;
-      }
-      
       if (images.length > 0) {
         // Formato multimodal para OpenAI
         userContent = [
-          { type: "text", text: fullText || "¿Qué ves en esta imagen?" }
+          { type: "text", text: text || "¿Qué ves en esta imagen?" }
         ];
         
         for (const img of images) {
           userContent.push({
             type: "image_url",
             image_url: {
-              url: `data:${img.mimeType};base64,${img.base64}`,
+              url: `${img.mimeType};base64,${img.base64}`,
               detail: "auto"
             }
           });
         }
       } else {
-        userContent = fullText;
+        userContent = text;
       }
 
       const openaiMessages = [
@@ -501,7 +346,10 @@ export default async function handler(req, res) {
 
       let ai;
       try {
+        console.log('[CHAT] Llamando a OpenAI con modelo:', model);
+        console.log('[CHAT] Número de mensajes:', openaiMessages.length);
         ai = await callOpenAI(openaiMessages, model);
+        console.log('[CHAT] Respuesta completa de OpenAI recibida');
       } catch (e) {
         console.error('[CHAT] Error de OpenAI:', e.message);
         console.error('[CHAT] Stack:', e.stack);
@@ -513,17 +361,24 @@ export default async function handler(req, res) {
         });
       }
 
+      console.log('[CHAT] Procesando respuesta de OpenAI...');
       const raw = ai.choices?.[0]?.message?.content || "";
       console.log('[CHAT] Respuesta raw recibida, longitud:', raw.length);
+      console.log('[CHAT] Primeros 200 caracteres:', raw.substring(0, 200));
       
       const parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
+      console.log('[CHAT] JSON parseado:', JSON.stringify(parsed).substring(0, 200));
 
       replyText = String(parsed.text || raw || "No logré formular una respuesta.");
       sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
       followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
       
-      // PASO 3: Guardar en caché (solo si no hay imágenes ni documentos)
-      if (images.length === 0 && documents.length === 0) {
+      console.log('[CHAT] Respuesta final - Texto longitud:', replyText.length);
+      console.log('[CHAT] Respuesta final - Fuentes:', sources.length);
+      console.log('[CHAT] Respuesta final - Followups:', followups.length);
+      
+      // PASO 3: Guardar en caché (solo si no hay imágenes)
+      if (images.length === 0) {
         console.log('[CHAT] Guardando respuesta en caché...');
         await saveToCache(db, text, replyText, sources, followups);
       }
@@ -531,18 +386,9 @@ export default async function handler(req, res) {
       // Guardar en historial de conversación
       const now = Date.now();
       const isFirstExchange = (convo.messages || []).length === 0;
-      
-      // Construir resumen del mensaje del usuario
-      let userMessageContent = text;
-      const attachments = [];
-      if (images.length > 0) attachments.push(`${images.length} imagen${images.length > 1 ? 'es' : ''}`);
-      if (documents.length > 0) {
-        const docNames = documents.map(d => d.name).join(', ');
-        attachments.push(`${documents.length} archivo${documents.length > 1 ? 's' : ''}: ${docNames}`);
-      }
-      if (attachments.length > 0) {
-        userMessageContent = text ? `${text}\n\n[Adjuntos: ${attachments.join(', ')}]` : `[Adjuntos: ${attachments.join(', ')}]`;
-      }
+      const userMessageContent = images.length > 0 
+        ? `${text || '[Imagen]'} (${images.length} imagen${images.length > 1 ? 'es' : ''})`
+        : text;
       
       await col.updateOne(
         { _id: convo._id },
@@ -557,16 +403,24 @@ export default async function handler(req, res) {
           },
           $set: {
             updatedAt: now,
-            ...(isFirstExchange ? { title: (text || (documents.length > 0 ? `Análisis: ${documents[0].name}` : "Análisis de imagen")).slice(0, 48) + ((text || (documents.length > 0 ? `Análisis: ${documents[0].name}` : "Análisis de imagen")).length > 48 ? "…" : "") } : {}),
+            ...(isFirstExchange ? { title: (text || "Análisis de imagen").slice(0, 48) + ((text || "Análisis de imagen").length > 48 ? "…" : "") } : {}),
           },
         }
       );
     }
 
     console.log('[CHAT] ✅ Respuesta enviada exitosamente');
+    console.log('[CHAT] Enviando respuesta al frontend:', { 
+      textLength: replyText.length, 
+      sourcesCount: sources.length, 
+      followupsCount: followups.length,
+      fromCache: !!cached 
+    });
     return send(res, 200, { text: replyText, sources, followups, fromCache: !!cached });
   } catch (e) {
-    console.error('[CHAT] Error:', e);
-    return send(res, 500, { error: "Error interno.", details: e.message });
+    console.error('[CHAT] Error general:', e);
+    console.error('[CHAT] Error stack:', e.stack);
+    console.error('[CHAT] Error message:', e.message);
+    return send(res, 500, { error: "Error interno.", details: e.message, stack: e.stack });
   }
 }

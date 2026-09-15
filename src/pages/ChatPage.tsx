@@ -272,7 +272,14 @@ export default function ChatPage() {
 
     setThinking(true);
     try {
+      console.log('[ChatPage] Enviando mensaje a la API...');
       const reply = await sendMessage(user, targetId, text, imagesToSend.length > 0 ? imagesToSend : undefined);
+      console.log('[ChatPage] Respuesta recibida de la API:', {
+        textLength: reply.text?.length,
+        sourcesCount: reply.sources?.length,
+        followUpsCount: reply.followUps?.length,
+        fromCache: reply.fromCache
+      });
       setThinking(false);
       typewriter(targetId, asstId, reply.text, {
         sources: reply.sources,
