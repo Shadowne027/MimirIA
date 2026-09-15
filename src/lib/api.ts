@@ -149,9 +149,24 @@ export async function register(username: string, password: string): Promise<Auth
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: uname, password }),
   });
-  const data = await parseApiResponse(res);
+  
+  // Intentar parsear la respuesta como JSON
+  let data = null;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw new Error(`Error del servidor: ${res.status} ${res.statusText}`);
+  }
+  
   if (data?.user) return data.user as AuthUser;
-  throw new Error(data?.error || "No se pudo crear la cuenta. Intenta de nuevo.");
+  
+  // Si hay un error detallado del backend, mostrarlo
+  if (data?.error) {
+    const details = data.details ? ` - ${data.details}` : '';
+    throw new Error(`${data.error}${details}`);
+  }
+  
+  throw new Error(`No se pudo crear la cuenta. Status: ${res.status}`);
 }
 
 export async function login(username: string, password: string): Promise<AuthUser> {
