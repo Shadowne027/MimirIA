@@ -121,13 +121,17 @@ export default function ChatPage() {
   const handleNew = async () => {
     if (!user) return;
     try {
+      console.log('[ChatPage] Creando nueva conversación...');
       const c = await createConversation(user);
+      console.log('[ChatPage] Conversación creada:', c.id);
       setConversations((prev) => [c, ...prev]);
       setActiveId(c.id);
       setSidebarOpen(false);
       setInput("");
     } catch (err) {
-      toast.error(formatApiError(err));
+      console.error('[ChatPage] Error al crear conversación:', err);
+      const errorMsg = formatApiError(err);
+      toast.error(errorMsg);
     }
   };
 
@@ -184,10 +188,19 @@ export default function ChatPage() {
 
     let convoId = activeId;
     if (!convoId) {
-      const c = await createConversation(user);
-      setConversations((prev) => [c, ...prev]);
-      convoId = c.id;
-      setActiveId(c.id);
+      try {
+        console.log('[ChatPage] No hay conversación activa, creando una...');
+        const c = await createConversation(user);
+        console.log('[ChatPage] Conversación creada automáticamente:', c.id);
+        setConversations((prev) => [c, ...prev]);
+        convoId = c.id;
+        setActiveId(c.id);
+      } catch (err) {
+        console.error('[ChatPage] Error al crear conversación automática:', err);
+        const errorMsg = formatApiError(err);
+        toast.error(`No se pudo iniciar la conversación: ${errorMsg}`);
+        return;
+      }
     }
     const targetId = convoId;
 

@@ -79,23 +79,33 @@ export default async function handler(req, res) {
       for await (const chunk of req) {
         body += chunk;
       }
-      const { title } = JSON.parse(body || '{}');
       
-      console.log('[CONVERSATIONS] Creando conversación:', title);
+      console.log('[CONVERSATIONS] Body recibido:', body);
+      
+      let title = 'Nueva conversación';
+      try {
+        const parsed = JSON.parse(body || '{}');
+        title = parsed.title || 'Nueva conversación';
+      } catch (e) {
+        console.log('[CONVERSATIONS] Error al parsear body:', e.message);
+      }
+      
+      console.log('[CONVERSATIONS] Creando conversación:', title, 'para usuario:', payload.userId);
       
       const now = Date.now();
       const doc = {
         userId: payload.userId,
-        title: String(title || 'Nueva conversación').slice(0, 80),
+        title: String(title).slice(0, 80),
         createdAt: now,
         updatedAt: now,
         messages: [],
       };
       
+      console.log('[CONVERSATIONS] Insertando en MongoDB...');
       const result = await col.insertOne(doc);
       await client.close();
       
-      console.log('[CONVERSATIONS] Conversación creada:', result.insertedId);
+      console.log('[CONVERSATIONS] Conversación creada exitosamente:', result.insertedId);
       return res.status(201).json({ 
         conversation: { ...doc, id: String(result.insertedId) } 
       });
