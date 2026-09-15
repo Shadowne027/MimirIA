@@ -233,10 +233,22 @@ export default function ChatPage() {
       });
     } catch (err) {
       setThinking(false);
-      const detalle =
-        err instanceof Error && err.message
-          ? err.message
-          : "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
+      let detalle = "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
+      
+      if (err instanceof Error) {
+        detalle = err.message;
+        
+        // Intentar extraer información adicional del error
+        try {
+          const errData = JSON.parse(err.message);
+          if (errData.error) detalle = errData.error;
+          if (errData.suggestion) detalle += `\n\n💡 ${errData.suggestion}`;
+          if (errData.model) detalle += `\n\nModelo usado: ${errData.model}`;
+        } catch {
+          // No es JSON, usar el mensaje tal cual
+        }
+      }
+      
       patchConvo(targetId, (c) => ({
         ...c,
         messages: c.messages.map((m) =>

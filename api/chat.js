@@ -139,9 +139,19 @@ async function saveToCache(db, question, answer, sources, followups) {
  */
 async function callOpenAI(messages, model, maxRetries = 2) {
   console.log(`[CHAT] Usando modelo: ${model}`);
+  console.log(`[CHAT] API Key presente: ${process.env.OPENAI_API_KEY ? 'Sí' : 'No'}`);
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     console.log(`[CHAT] Intento ${attempt + 1} de ${maxRetries + 1}`);
+    
+    const requestBody = {
+      model,
+      messages,
+      temperature: 0.7,
+      max_tokens: 2048,
+    };
+    
+    console.log('[CHAT] Request body:', JSON.stringify(requestBody, null, 2));
     
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -149,12 +159,7 @@ async function callOpenAI(messages, model, maxRetries = 2) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0.7,
-        max_tokens: 2048,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     console.log('[CHAT] Status de OpenAI:', aiRes.status);
@@ -167,8 +172,11 @@ async function callOpenAI(messages, model, maxRetries = 2) {
 
     const errBody = await aiRes.json().catch(() => ({}));
     const errMsg = errBody?.error?.message || "";
+    const errType = errBody?.error?.type || "";
+    const errCode = errBody?.error?.code || "";
     
-    console.log('[CHAT] Error de OpenAI:', errMsg);
+    console.log('[CHAT] Error completo de OpenAI:', JSON.stringify(errBody, null, 2));
+    console.log('[CHAT] Tipo:', errType, 'Código:', errCode);
 
     if ((aiRes.status === 429 || aiRes.status === 503) && attempt < maxRetries) {
       console.log(`[CHAT] Reintentando en ${2000 * (attempt + 1)}ms...`);
@@ -176,7 +184,17 @@ async function callOpenAI(messages, model, maxRetries = 2) {
       continue;
     }
 
-    throw new Error(errMsg || `OpenAI respondió ${aiRes.status}`);
+    // Mensajes de error más descriptivos
+    let errorDetail = errMsg || `OpenAI respondió ${aiRes.status}`;
+    if (aiRes.status === 401) {
+      errorDetail = 'API key inválida o expirada. Verifica tu OPENAI_API_KEY en Vercel.';
+    } else if (aiRes.status === 404 && errCode === 'model_not_found') {
+      errorDetail = `El modelo "${model}" no está disponible en tu cuenta. Verifica que tengas acceso a GPT-5 nano y GPT-5 mini en tu plan de OpenAI.`;
+    } else if (aiRes.status === 429) {
+      errorDetail = 'Límite de tasa excedido. Espera un momento o verifica tu plan de OpenAI.';
+    }
+    
+    throw new Error(errorDetail);
   }
 }
 
@@ -301,7 +319,13 @@ export default async function handler(req, res) {
         ai = await callOpenAI(openaiMessages, model);
       } catch (e) {
         console.error('[CHAT] Error de OpenAI:', e.message);
-        return send(res, 502, { error: `Error de IA: ${e.message}`, details: e.message });
+        console.error('[CHAT] Stack:', e.stack);
+        return send(res, 502, { 
+          error: `Error de IA: ${e.message}`, 
+          details: e.message,
+          model: model,
+          suggestion: 'Verifica que tu API key tenga acceso a los modelos GPT-5 nano y GPT-5 mini'
+        });
       }
 
       const raw = ai.choices?.[0]?.message?.content || "";
