@@ -247,14 +247,35 @@ export async function getConversations(user: AuthUser): Promise<Conversation[]> 
 
 export async function createConversation(user: AuthUser, title = "Nueva conversación"): Promise<Conversation> {
   await requireServer();
+  
+  console.log('[API] Creando conversación...');
+  
   const res = await fetch("/api/conversations", {
     method: "POST",
     headers: authHeaders(user.token),
     body: JSON.stringify({ title }),
   });
-  const data = await parseApiResponse(res);
+  
+  console.log('[API] Status:', res.status);
+  
+  const text = await res.text();
+  console.log('[API] Response:', text);
+  
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch (e) {
+    throw new Error(`Error del servidor: ${res.status} - ${text.substring(0, 200)}`);
+  }
+  
   if (res.ok && data?.conversation) return normalizeServerConvo(data.conversation);
-  throw new Error(data?.error || "No se pudo crear la conversación.");
+  
+  if (data?.error) {
+    const details = data.details ? `\n${data.details}` : '';
+    throw new Error(`${data.error}${details}`);
+  }
+  
+  throw new Error(`No se pudo crear la conversación. Status: ${res.status}`);
 }
 
 export async function deleteConversation(user: AuthUser, id: string): Promise<void> {
