@@ -88,13 +88,23 @@ export function preflight(req, res) {
 
 export function readBody(req) {
   return new Promise((resolve) => {
+    const contentType = req.headers["content-type"] || "";
+    
+    // Si es multipart/form-data (archivos), devolver objeto vacío con arrays
+    if (contentType.includes("multipart/form-data")) {
+      resolve({ images: [], documents: [] });
+      return;
+    }
+    
+    // Si es JSON, leer normalmente
     let data = "";
     req.on("data", (c) => (data += c));
     req.on("end", () => {
       try {
-        resolve(JSON.parse(data || "{}"));
+        const parsed = JSON.parse(data || "{}");
+        resolve({ ...parsed, images: [], documents: [] });
       } catch {
-        resolve({});
+        resolve({ images: [], documents: [] });
       }
     });
   });
