@@ -316,7 +316,6 @@ export async function sendMessage(
       method: "POST",
       headers: {
         Authorization: `Bearer ${user.token}`,
-        // No poner Content-Type, el navegador lo hace automáticamente con el boundary
       },
       body: formData,
     });

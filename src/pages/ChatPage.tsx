@@ -157,13 +157,13 @@ export default function ChatPage() {
 
   const retryConnection = () => loadAll(true);
 
-  // Manejo de imágenes
+  // Manejo de archivos (imágenes, PDFs, Word, Excel)
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    // Limitar a 5 imágenes máximo
-    const newImages = files.slice(0, 5 - selectedImages.length);
+    // Limitar a 10 archivos máximo
+    const newImages = files.slice(0, 10 - selectedImages.length);
     
     // Crear previews
     const newPreviews: string[] = [];
@@ -580,7 +580,7 @@ export default function ChatPage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,.txt,.md,.csv"
                   multiple
                   onChange={handleImageSelect}
                   className="hidden"
@@ -623,13 +623,13 @@ export default function ChatPage() {
                   }}
                   className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
                 >
-                  {/* Botón de adjuntar imagen */}
+                  {/* Botón de adjuntar archivos */}
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={busy || selectedImages.length >= 5}
-                    aria-label="Adjuntar imagen"
-                    title="Adjuntar imagen (máx. 5, 20MB c/u)"
+                    disabled={busy || selectedImages.length >= 10}
+                    aria-label="Adjuntar archivo"
+                    title="Adjuntar imágenes, PDFs, Word o Excel (máx. 10 archivos, 50MB c/u)"
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)] disabled:opacity-40"
                   >
                     <Paperclip size={18} />
@@ -638,7 +638,7 @@ export default function ChatPage() {
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder={selectedImages.length > 0 ? "Agrega un mensaje o envía la imagen…" : "Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"}
+                    placeholder={selectedImages.length > 0 ? "Agrega un mensaje o envía los archivos…" : "Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"}
                     data-testid="chat-input"
                     className="h-10 min-w-0 flex-1 bg-transparent px-4 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
                   />
@@ -653,7 +653,7 @@ export default function ChatPage() {
                   </button>
                 </form>
                 <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
-                  MIMIR puede analizar imágenes y cometer errores: verifica siempre las fuentes citadas.
+                  MIMIR puede analizar imágenes, PDFs, Word y Excel. Verifica siempre las fuentes citadas.
                 </p>
               </div>
             </>
