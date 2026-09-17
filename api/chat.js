@@ -274,21 +274,20 @@ export default async function handler(req, res) {
     const user = await authUser(req);
     if (!user) return send(res, 401, { error: "Sesión inválida." });
 
-    const { conversationId, message, images } = await readBody(req);
+    const { conversationId, message } = await readBody(req);
     const text = String(message || "").trim();
     
-    if (!text && images.length === 0) {
-      return send(res, 400, { error: "Escribe un mensaje o adjunta una imagen." });
+    if (!text) {
+      return send(res, 400, { error: "Escribe un mensaje." });
     }
 
     console.log(`[CHAT] Mensaje: ${text.substring(0, 50)}...`);
-    console.log(`[CHAT] Imágenes: ${images.length}`);
 
     const db = await getDb();
     
-    // PASO 1: Buscar en caché (solo si no hay imágenes)
+    // PASO 1: Buscar en caché
     console.log('[CHAT] Buscando en caché...');
-    const cached = await searchCache(db, text, images.length > 0);
+    const cached = await searchCache(db, text, false);
     
     let replyText, sources, followups;
     
@@ -302,7 +301,7 @@ export default async function handler(req, res) {
       // PASO 2: No hay caché, consultar IA
       console.log('[CHAT] ❌ No hay caché, consultando IA...');
       
-      const difficulty = classifyDifficulty(text, images.length > 0);
+      const difficulty = classifyDifficulty(text, false);
       const model = selectModel(difficulty);
       console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
 
@@ -317,26 +316,8 @@ export default async function handler(req, res) {
 
       const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
 
-      // Construir el mensaje del usuario con texto e imágenes
-      let userContent;
-      if (images.length > 0) {
-        // Formato multimodal para OpenAI
-        userContent = [
-          { type: "text", text: text || "¿Qué ves en esta imagen?" }
-        ];
-        
-        for (const img of images) {
-          userContent.push({
-            type: "image_url",
-            image_url: {
-              url: `${img.mimeType};base64,${img.base64}`,
-              detail: "auto"
-            }
-          });
-        }
-      } else {
-        userContent = text;
-      }
+      // Construir el mensaje del usuario
+      const userContent = text;
 
       const openaiMessages = [
         { role: "system", content: SYSTEM_PROMPT },
@@ -377,18 +358,14 @@ export default async function handler(req, res) {
       console.log('[CHAT] Respuesta final - Fuentes:', sources.length);
       console.log('[CHAT] Respuesta final - Followups:', followups.length);
       
-      // PASO 3: Guardar en caché (solo si no hay imágenes)
-      if (images.length === 0) {
-        console.log('[CHAT] Guardando respuesta en caché...');
-        await saveToCache(db, text, replyText, sources, followups);
-      }
+      // PASO 3: Guardar en caché
+      console.log('[CHAT] Guardando respuesta en caché...');
+      await saveToCache(db, text, replyText, sources, followups);
       
       // Guardar en historial de conversación
       const now = Date.now();
       const isFirstExchange = (convo.messages || []).length === 0;
-      const userMessageContent = images.length > 0 
-        ? `${text || '[Imagen]'} (${images.length} imagen${images.length > 1 ? 'es' : ''})`
-        : text;
+      const userMessageContent = text;
       
       await col.updateOne(
         { _id: convo._id },
@@ -403,7 +380,7 @@ export default async function handler(req, res) {
           },
           $set: {
             updatedAt: now,
-            ...(isFirstExchange ? { title: (text || "Análisis de imagen").slice(0, 48) + ((text || "Análisis de imagen").length > 48 ? "…" : "") } : {}),
+            ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {}),
           },
         }
       );
