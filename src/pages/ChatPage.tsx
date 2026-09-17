@@ -1,674 +1,210 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
-import {
-  Compass, ExternalLink, Globe, Loader2, LogOut, Menu,
-  Plus, Send, Sparkles, Trash2, X, MessageSquare, Wifi, WifiOff, RefreshCw, AlertTriangle,
-  Paperclip, Image as ImageIcon,
-} from "lucide-react";
-import { Toaster, toast } from "sonner";
-import { useAuth } from "../contexts/AuthContext";
-import { LOGO } from "../lib/assets";
-import {
-  getConversations,
-  createConversation,
-  deleteConversation,
-  sendMessage,
-  getHealth,
-  formatApiError,
-} from "../lib/api";
-import type { AuthUser, ChatMessage, Conversation, HealthStatus } from "../lib/api";
+import { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useTheme } from '../lib/useTheme';
+import { ChatInterface } from '../components/ChatInterface';
+import { getConversations, deleteConversation } from '../lib/api';
+import type { Conversation } from '../lib/types';
 
-const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-
-/* ================= Mini-render de texto (negritas + saltos + cursivas) ================= */
-function RichText({ text }: { text: string }) {
-  const lines = text.split("\n");
-  return (
-    <>
-      {lines.map((line, i) => {
-        if (!line.trim()) return <div key={i} className="h-2" />;
-        const parts = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
-        return (
-          <p key={i} className="leading-relaxed">
-            {parts.map((p, j) => {
-              if (p.startsWith("**") && p.endsWith("**"))
-                return <strong key={j} className="font-semibold text-[var(--text)]">{p.slice(2, -2)}</strong>;
-              if (p.startsWith("*") && p.endsWith("*")) return <em key={j}>{p.slice(1, -1)}</em>;
-              return <React.Fragment key={j}>{p}</React.Fragment>;
-            })}
-          </p>
-        );
-      })}
-    </>
-  );
-}
-
-/* ================= CHAT PAGE ================= */
-export default function ChatPage() {
-  const { user, initializing, logout } = useAuth();
+export function ChatPage() {
   const navigate = useNavigate();
-
+  const { id } = useParams<{ id: string }>();
+  const { isDark, toggle } = useTheme();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [input, setInput] = useState("");
-  const [loadingHistory, setLoadingHistory] = useState(true);
-  const [thinking, setThinking] = useState(false);
-  const [streamingId, setStreamingId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [selectedImages, setSelectedImages] = useState<File[]>([]);
-  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const streamTimer = useRef<number | null>(null);
-
-  // Cargar diagnóstico del servidor + historial desde MongoDB
-  const loadAll = async (forceHealth = false) => {
-    if (!user) return;
-    setLoadingHistory(true);
-    const h = await getHealth(forceHealth);
-    setHealth(h);
-    if (h.ok) {
-      try {
-        const convos = await getConversations(user);
-        setConversations(convos);
-        setActiveId((cur) => cur ?? convos[0]?.id ?? null);
-        if (forceHealth) toast.success("Conectado con MIMIR en la nube");
-      } catch (e) {
-        toast.error(formatApiError(e));
-      }
-    }
-    setLoadingHistory(false);
-  };
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    let alive = true;
-    (async () => {
-      await loadAll();
-      if (!alive) return;
-      // Si la landing envió una pregunta ("Empieza ahora"), dejarla lista en el input
-      const prefill = sessionStorage.getItem("mimir_first_prompt");
-      if (prefill) {
-        sessionStorage.removeItem("mimir_first_prompt");
-        setInput(prefill);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [conversations, thinking, activeId]);
-
-  useEffect(() => {
-    return () => {
-      if (streamTimer.current) window.clearInterval(streamTimer.current);
-    };
+    loadConversations();
   }, []);
 
-  const active = useMemo(
-    () => conversations.find((c) => c.id === activeId) ?? null,
-    [conversations, activeId]
-  );
-
-  if (!initializing && !user) return <Navigate to="/" replace />;
-
-  const patchConvo = (id: string, fn: (c: Conversation) => Conversation) => {
-    setConversations((prev) => prev.map((c) => (c.id === id ? fn(c) : c)));
-  };
-
-  const handleNew = async () => {
-    if (!user) return;
+  const loadConversations = async () => {
+    setIsLoading(true);
     try {
-      console.log('[ChatPage] Creando nueva conversación...');
-      const c = await createConversation(user);
-      console.log('[ChatPage] Conversación creada:', c.id);
-      setConversations((prev) => [c, ...prev]);
-      setActiveId(c.id);
-      setSidebarOpen(false);
-      setInput("");
-    } catch (err) {
-      console.error('[ChatPage] Error al crear conversación:', err);
-      const errorMsg = formatApiError(err);
-      toast.error(errorMsg);
+      const data = await getConversations();
+      setConversations(data);
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleDelete = async (id: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!user) return;
-    try {
-      await deleteConversation(user, id);
-      setConversations((prev) => {
-        const next = prev.filter((c) => c.id !== id);
-        if (activeId === id) setActiveId(next[0]?.id ?? null);
-        return next;
-      });
-      toast.success("Conversación eliminada");
-    } catch (err) {
-      toast.error(formatApiError(err));
-    }
+  const handleNewChat = () => {
+    navigate('/chat');
+    setIsSidebarOpen(false);
   };
 
-  const retryConnection = () => loadAll(true);
+  const handleSelectConversation = (convId: string) => {
+    navigate(`/chat/${convId}`);
+    setIsSidebarOpen(false);
+  };
 
-  // Manejo de archivos (imágenes, PDFs, Word, Excel)
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    // Limitar a 10 archivos máximo
-    const newImages = files.slice(0, 10 - selectedImages.length);
+  const handleDeleteConversation = async (e: React.MouseEvent, convId: string) => {
+    e.stopPropagation();
+    if (!confirm('¿Estás seguro de eliminar esta conversación?')) return;
     
-    // Crear previews
-    const newPreviews: string[] = [];
-    newImages.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        newPreviews.push(e.target?.result as string);
-        if (newPreviews.length === newImages.length) {
-          setImagePreviews(prev => [...prev, ...newPreviews]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
-    setSelectedImages(prev => [...prev, ...newImages]);
-    
-    // Limpiar el input para poder seleccionar el mismo archivo de nuevo
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  const removeImage = (index: number) => {
-    setSelectedImages(prev => prev.filter((_, i) => i !== index));
-    setImagePreviews(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const clearImages = () => {
-    setSelectedImages([]);
-    setImagePreviews([]);
-  };
-
-  const typewriter = (convoId: string, msgId: string, full: string, meta: Partial<ChatMessage>) => {
-    const words = full.split(/(\s+)/);
-    let i = 0;
-    let acc = "";
-    setStreamingId(msgId);
-    streamTimer.current = window.setInterval(() => {
-      for (let k = 0; k < 4; k++) {
-        if (i < words.length) {
-          acc += words[i];
-          i++;
-        }
-      }
-      patchConvo(convoId, (c) => ({
-        ...c,
-        messages: c.messages.map((m) => (m.id === msgId ? { ...m, content: acc } : m)),
-      }));
-      if (i >= words.length) {
-        if (streamTimer.current) window.clearInterval(streamTimer.current);
-        streamTimer.current = null;
-        patchConvo(convoId, (c) => ({
-          ...c,
-          messages: c.messages.map((m) => (m.id === msgId ? { ...m, content: full, ...meta } : m)),
-        }));
-        setStreamingId(null);
-      }
-    }, 26);
-  };
-
-  const handleSend = async (raw?: string) => {
-    const text = (raw ?? input).trim();
-    if ((!text && selectedImages.length === 0) || thinking || !user) return;
-    setInput("");
-
-    let convoId = activeId;
-    if (!convoId) {
-      try {
-        console.log('[ChatPage] No hay conversación activa, creando una...');
-        const c = await createConversation(user);
-        console.log('[ChatPage] Conversación creada automáticamente:', c.id);
-        setConversations((prev) => [c, ...prev]);
-        convoId = c.id;
-        setActiveId(c.id);
-      } catch (err) {
-        console.error('[ChatPage] Error al crear conversación automática:', err);
-        const errorMsg = formatApiError(err);
-        toast.error(`No se pudo iniciar la conversación: ${errorMsg}`);
-        return;
-      }
-    }
-    const targetId = convoId;
-
-    // Capturar imágenes antes de limpiar
-    const imagesToSend = [...selectedImages];
-    clearImages();
-
-    const userMsg: ChatMessage = { role: "user", content: text, at: Date.now() };
-    const asstId = uid();
-    patchConvo(targetId, (c) => ({
-      ...c,
-      title: c.messages.length === 0 ? text.slice(0, 48) + (text.length > 48 ? "…" : "") : c.title,
-      updatedAt: Date.now(),
-      messages: [...c.messages, userMsg, { role: "assistant", content: "", at: Date.now() } as ChatMessage],
-    }));
-    // Marcador temporal con id para el typewriter
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id !== targetId) return c;
-        const msgs = [...c.messages];
-        const last = msgs[msgs.length - 1] as ChatMessage & { id?: string };
-        msgs[msgs.length - 1] = { ...last, id: asstId };
-        return { ...c, messages: msgs };
-      })
-    );
-
-    setThinking(true);
     try {
-      console.log('[ChatPage] Enviando mensaje a la API...');
-      const reply = await sendMessage(user, targetId, text, imagesToSend.length > 0 ? imagesToSend : undefined);
-      console.log('[ChatPage] Respuesta recibida de la API:', {
-        textLength: reply.text?.length,
-        sourcesCount: reply.sources?.length,
-        followUpsCount: reply.followUps?.length,
-        fromCache: reply.fromCache
-      });
-      setThinking(false);
-      typewriter(targetId, asstId, reply.text, {
-        sources: reply.sources,
-        followUps: reply.followUps,
-      });
-    } catch (err) {
-      setThinking(false);
-      let detalle = "Ups, algo salió mal al consultar. Inténtalo de nuevo en unos segundos.";
-      
-      if (err instanceof Error) {
-        detalle = err.message;
-        
-        // Intentar extraer información adicional del error
-        try {
-          const errData = JSON.parse(err.message);
-          if (errData.error) detalle = errData.error;
-          if (errData.suggestion) detalle += `\n\n💡 ${errData.suggestion}`;
-          if (errData.model) detalle += `\n\nModelo usado: ${errData.model}`;
-        } catch {
-          // No es JSON, usar el mensaje tal cual
-        }
+      await deleteConversation(convId);
+      await loadConversations();
+      if (id === convId) {
+        navigate('/chat');
       }
-      
-      patchConvo(targetId, (c) => ({
-        ...c,
-        messages: c.messages.map((m) =>
-          (m as ChatMessage & { id?: string }).id === asstId ? { ...m, content: `⚠️ ${detalle}` } : m
-        ),
-      }));
-      setStreamingId(null);
-      toast.error("No se pudo obtener la respuesta");
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate("/");
+  const formatRelativeTime = (date: Date) => {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    
+    if (days === 0) return 'Hoy';
+    if (days === 1) return 'Ayer';
+    if (days < 7) return `Hace ${days} días`;
+    return date.toLocaleDateString('es-CO');
   };
-
-  const busy = thinking || streamingId !== null;
 
   return (
-    <div className="flex h-dvh flex-col bg-[var(--bg)] font-body text-[var(--text)]">
-      {/* ===== Barra superior ===== */}
-      <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)]/90 px-4 py-3 backdrop-blur md:px-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="rounded-lg p-2 text-[var(--text-2)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--text)] md:hidden"
-            aria-label="Menú"
-          >
-            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-          <Link to="/" className="flex items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-              <img src={LOGO} alt="" className="h-full w-full object-cover" />
-            </span>
-            <span className="font-display text-lg font-semibold tracking-tight text-[var(--text)]">
-              MIMIR <span className="text-[var(--brand-text)]">IA</span>
-            </span>
-          </Link>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="hidden items-center gap-2 text-sm text-[var(--text-2)] md:flex">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--brand)] text-xs font-bold uppercase text-white">
-              {user?.username?.slice(0, 1)}
-            </div>
-            <div className="flex flex-col leading-tight">
-              <span className="text-xs font-semibold text-[var(--text)]">{user?.username}</span>
-              <span className="font-mono text-[10px] text-[var(--amber)]">{user?.id}</span>
-            </div>
+    <div className="h-screen flex bg-background overflow-hidden">
+      {/* Mobile Sidebar Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside className={`fixed lg:relative w-72 h-full bg-muted/50 border-r border-border transform transition-transform duration-300 z-50 ${
+        isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+      }`}>
+        <div className="flex flex-col h-full">
+          {/* Header */}
+          <div className="p-4 border-b border-border">
+            <button
+              onClick={handleNewChat}
+              className="w-full px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Nuevo Chat
+            </button>
           </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--text)]"
-          >
-            <LogOut size={16} /> <span className="hidden sm:inline">Salir</span>
-          </button>
-        </div>
-      </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ===== Sidebar ===== */}
-        <aside
-          className={`absolute inset-y-0 left-0 z-40 w-72 transform border-r border-[var(--border)] bg-[var(--bg)] transition-transform duration-300 md:relative md:translate-x-0 ${
-            sidebarOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          <div className="flex h-full flex-col">
-            <div className="border-b border-[var(--border)] p-4">
-              <button
-                onClick={handleNew}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--brand)] px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
-              >
-                <Plus size={16} /> Nueva conversación
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto chat-scroll p-3">
-              {loadingHistory ? (
-                <div className="flex items-center justify-center py-8 text-sm text-[var(--text-3)]">
-                  <Loader2 size={16} className="animate-spin" /> Cargando…
-                </div>
-              ) : conversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center gap-2 py-8 text-center text-sm text-[var(--text-3)]">
-                  <MessageSquare size={24} className="opacity-40" />
-                  <p>Sin conversaciones aún</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {conversations.map((c) => (
-                    <button
-                      key={c.id}
-                      onClick={() => {
-                        setActiveId(c.id);
-                        setSidebarOpen(false);
-                      }}
-                      className={`group flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                        activeId === c.id
-                          ? "bg-[var(--bg-soft)] text-[var(--text)]"
-                          : "text-[var(--text-2)] hover:bg-[var(--bg-soft)] hover:text-[var(--text)]"
-                      }`}
-                    >
-                      <MessageSquare size={14} className="shrink-0 opacity-60" />
-                      <span className="flex-1 truncate">{c.title}</span>
-                      <button
-                        onClick={(e) => handleDelete(c.id, e)}
-                        className="shrink-0 rounded p-1 opacity-0 transition-opacity hover:bg-[var(--bg)] group-hover:opacity-100"
-                        aria-label="Eliminar"
-                      >
-                        <Trash2 size={12} className="text-[var(--text-3)] hover:text-red-500" />
-                      </button>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="border-t border-[var(--border)] p-3 text-xs text-[var(--text-3)]">
-              <div className="flex items-center gap-2">
-                {health?.ok ? (
-                  <>
-                    <Wifi size={12} className="text-[var(--brand-text)]" />
-                    <span>Conectado · GPT-5 + MongoDB</span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff size={12} className="text-red-500" />
-                    <span>Sin conexión al servidor</span>
-                  </>
-                )}
+          {/* Conversations List */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div>
               </div>
-              <div className="mt-1 flex items-center gap-1.5">
-                <Sparkles size={11} className="text-[var(--amber)]" />
-                <span>Estudiante {user?.id}</span>
+            ) : conversations.length === 0 ? (
+              <div className="text-center py-8 px-4">
+                <svg className="w-12 h-12 text-muted-foreground mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+                <p className="text-sm text-muted-foreground">No hay conversaciones aún</p>
               </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* ===== Área de chat ===== */}
-        <main className="flex flex-1 flex-col overflow-hidden">
-          {!active ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-              {health && !health.ok ? (
-                <>
-                  <AlertTriangle size={48} className="text-red-500" />
-                  <h1 className="font-display text-2xl font-semibold tracking-tight">
-                    MIMIR no está en línea
-                  </h1>
-                  <p className="max-w-md text-sm text-[var(--text-2)]">
-                    {health.mongoError || "No se pudo conectar con el servidor."}
-                  </p>
-                  <button
-                    onClick={retryConnection}
-                    className="flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
-                  >
-                    <RefreshCw size={15} className={loadingHistory ? "animate-spin" : ""} /> Reintentar
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="inline-flex h-16 w-16 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)] shadow-[0_10px_30px_var(--shadow-brand)]">
-                    <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                  </span>
-                  <h1 className="font-display text-2xl font-semibold tracking-tight">
-                    Bienvenido a MIMIR IA
-                  </h1>
-                  <p className="max-w-md text-sm text-[var(--text-2)]">
-                    Tu tutor personal con fuentes verificadas. Haz una pregunta para comenzar.
-                  </p>
-                  <button
-                    onClick={handleNew}
-                    className="flex items-center gap-2 rounded-full bg-[var(--brand)] px-5 py-2.5 text-sm font-medium text-white transition-all hover:bg-[var(--brand-hover)] active:scale-95"
-                  >
-                    <Plus size={15} /> Nueva conversación
-                  </button>
-                </>
-              )}
-            </div>
-          ) : (
-            <>
-              {/* Header de conversación */}
-              <div className="border-b border-[var(--border)] px-4 py-3 md:px-6">
-                <h2 className="truncate text-sm font-medium text-[var(--text)]">{active.title}</h2>
-              </div>
-
-              {/* Mensajes */}
-              <div className="flex-1 overflow-y-auto chat-scroll">
-                {active.messages.length === 0 ? (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
-                    <span className="inline-flex h-14 w-14 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                      <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                    </span>
-                    <div>
-                      <h3 className="font-display text-lg font-semibold tracking-tight">
-                        ¿En qué te ayudo hoy?
-                      </h3>
-                      <p className="mt-1 text-sm text-[var(--text-2)]">
-                        Pregúntame lo que necesites entender.
+            ) : (
+              conversations.map((conv) => (
+                <div
+                  key={conv.id}
+                  onClick={() => handleSelectConversation(conv.id)}
+                  className={`group p-3 rounded-xl cursor-pointer transition-colors ${
+                    id === conv.id 
+                      ? 'bg-primary/10 border border-primary/20' 
+                      : 'hover:bg-muted border border-transparent'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-medium text-sm text-foreground truncate">{conv.title}</h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {formatRelativeTime(conv.updatedAt)}
                       </p>
                     </div>
+                    <button
+                      onClick={(e) => handleDeleteConversation(e, conv.id)}
+                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                      aria-label="Eliminar conversación"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
                   </div>
-                ) : (
-                  <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6 md:px-8">
-                    {active.messages.map((m, i) =>
-                      m.role === "user" ? (
-                        <div key={i} className="flex justify-end">
-                          <div className="max-w-[85%] rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-2.5 text-sm text-white">
-                            {m.content}
-                          </div>
-                        </div>
-                      ) : (
-                        <div key={i} className="flex gap-3">
-                          <span className="mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                            <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                          </span>
-                          <div className="max-w-[90%] min-w-0">
-                            <div className="rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-sm text-[var(--text-2)]">
-                              {m.content ? (
-                                <RichText text={m.content} />
-                              ) : (
-                                <span className="flex items-center gap-1.5 py-1">
-                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                                  <span className="thinking-dot h-2 w-2 rounded-full bg-[var(--brand)]" />
-                                </span>
-                              )}
-                              {m.sources && m.sources.length > 0 && m.content && (
-                                <div className="mt-3 border-t border-[var(--border-soft)] pt-3">
-                                  <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-[var(--brand-text)]">
-                                    <Globe size={11} /> Fuentes citadas
-                                  </div>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {m.sources.map((s, j) => (
-                                      <a
-                                        key={j}
-                                        href={s.url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--bg-soft)] px-2.5 py-1 text-[11px] font-medium text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)]"
-                                      >
-                                        {s.label} <ExternalLink size={10} />
-                                      </a>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            {m.followUps && m.followUps.length > 0 && streamingId === null && i === active.messages.length - 1 && (
-                              <div className="mt-2.5 flex flex-wrap gap-1.5">
-                                {m.followUps.map((f, j) => (
-                                  <button
-                                    key={j}
-                                    onClick={() => handleSend(f)}
-                                    disabled={busy}
-                                    className="flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:border-[var(--brand)] hover:text-[var(--brand-text)] disabled:opacity-50"
-                                  >
-                                    <Compass size={11} className="text-[var(--amber)]" /> {f}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    )}
-                    {thinking && (
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[var(--brand)]">
-                          <img src={LOGO} alt="" className="h-full w-full object-cover" />
-                        </span>
-                        <div className="flex items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border-soft)] bg-[var(--surface)] px-4 py-3 text-xs text-[var(--text-3)]">
-                          <Loader2 size={13} className="animate-spin text-[var(--brand-text)]" />
-                          MIMIR está consultando fuentes…
-                        </div>
-                      </div>
-                    )}
-                    <div ref={bottomRef} />
-                  </div>
-                )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t border-border">
+            <button
+              onClick={() => navigate('/')}
+              className="w-full px-4 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center justify-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Volver al inicio
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden">
+        {/* Top Bar */}
+        <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
+            >
+              <svg className="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+                </svg>
               </div>
+              <span className="font-semibold text-foreground hidden sm:inline">MIMIR IA</span>
+            </div>
+          </div>
 
-              {/* ===== Input ===== */}
-              <div className="relative border-t border-[var(--border)] bg-[var(--bg)]/90 p-3 backdrop-blur md:p-4">
-                {/* Input file oculto */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.xls,.xlsx,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,.txt,.md,.csv"
-                  multiple
-                  onChange={handleImageSelect}
-                  className="hidden"
-                />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={toggle}
+              className="p-2 rounded-lg hover:bg-muted transition-colors"
+              aria-label="Toggle theme"
+            >
+              {isDark ? (
+                <svg className="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5 text-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </header>
 
-                {/* Previews de imágenes */}
-                {imagePreviews.length > 0 && (
-                  <div className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">
-                    {imagePreviews.map((preview, index) => (
-                      <div key={index} className="group relative">
-                        <img
-                          src={preview}
-                          alt={`Preview ${index + 1}`}
-                          className="h-20 w-20 rounded-lg border border-[var(--border)] object-cover"
-                        />
-                        <button
-                          onClick={() => removeImage(index)}
-                          className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white shadow-md transition-transform hover:scale-110"
-                          aria-label="Eliminar imagen"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                    {imagePreviews.length > 1 && (
-                      <button
-                        onClick={clearImages}
-                        className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-xs text-[var(--text-3)] transition-colors hover:border-red-400 hover:text-red-400"
-                      >
-                        Limpiar todo
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    handleSend();
-                  }}
-                  className="mx-auto flex max-w-3xl items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] p-1.5 transition-colors focus-within:border-[var(--brand)]"
-                >
-                  {/* Botón de adjuntar archivos */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={busy || selectedImages.length >= 10}
-                    aria-label="Adjuntar archivo"
-                    title="Adjuntar imágenes, PDFs, Word o Excel (máx. 10 archivos, 50MB c/u)"
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--text-3)] transition-colors hover:bg-[var(--bg-soft)] hover:text-[var(--brand-text)] disabled:opacity-40"
-                  >
-                    <Paperclip size={18} />
-                  </button>
-
-                  <input
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder={selectedImages.length > 0 ? "Agrega un mensaje o envía los archivos…" : "Escribe tu pregunta… (ej. ¿Qué es la fotosíntesis?)"}
-                    data-testid="chat-input"
-                    className="h-10 min-w-0 flex-1 bg-transparent px-4 text-sm text-[var(--text)] outline-none placeholder:text-[var(--text-3)]"
-                  />
-                  <button
-                    type="submit"
-                    disabled={busy || (!input.trim() && selectedImages.length === 0)}
-                    data-testid="chat-send"
-                    aria-label="Enviar"
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white transition-all hover:bg-[var(--brand-hover)] active:scale-90 disabled:opacity-40"
-                  >
-                    {thinking ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  </button>
-                </form>
-                <p className="mx-auto mt-2 max-w-3xl text-center text-[10px] text-[var(--text-3)]">
-                  MIMIR puede analizar imágenes, PDFs, Word y Excel. Verifica siempre las fuentes citadas.
-                </p>
-              </div>
-            </>
-          )}
-        </main>
-      </div>
-
-      <Toaster position="top-center" richColors />
+        {/* Chat Interface */}
+        <div className="flex-1 overflow-hidden">
+          <ChatInterface
+            conversationId={id}
+            onConversationChange={loadConversations}
+          />
+        </div>
+      </main>
     </div>
   );
 }

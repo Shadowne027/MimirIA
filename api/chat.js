@@ -1,303 +1,238 @@
-import { ObjectId } from "mongodb";
-import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_lib.js";
+import { createHashSignature, verifyHashSignature } from './_lib.js';
 
-/**
- * POST /api/chat
- * Sistema inteligente con caché y enrutamiento de modelos
- */
+const SYSTEM_PROMPT = `Eres MIMIR, un asistente de IA útil, preciso y amigable. 
+Responde de manera concisa pero completa en español.
+Usa GPT-5 nano para preguntas simples y GPT-5 mini para preguntas complejas.`;
 
-function classifyDifficulty(message) {
-  const msg = message.toLowerCase();
-  const len = message.length;
-  
-  if (/código|program|función|algoritmo|ecuaci|derivad|integral|cálculo|físic|quím|analiz|compar|ensay|tesis/i.test(msg) || len > 200) {
-    return 'complex';
-  }
-  
-  if (/^(hola|hey|buenos|buenas|gracias|ok|vale)/i.test(msg) || /^(qué es|quién es|cuándo|dónde)/i.test(msg) && len < 50) {
-    return 'simple';
-  }
-  
-  return 'medium';
-}
-
-function selectModel(difficulty) {
-  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
-}
-
-function normalizeText(text) {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function calculateSimilarity(text1, text2) {
-  const words1 = new Set(normalizeText(text1).split(' '));
-  const words2 = new Set(normalizeText(text2).split(' '));
-  const intersection = new Set([...words1].filter(x => words2.has(x)));
-  const union = new Set([...words1, ...words2]);
-  return intersection.size / union.size;
-}
-
-async function searchCache(db, message) {
+export async function POST(request) {
   try {
-    const cache = db.collection('cache');
-    const allCache = await cache.find({}).toArray();
-    
-    if (allCache.length === 0) return null;
-    
-    let bestMatch = null;
-    let bestSimilarity = 0;
-    const threshold = 0.6;
-    
-    for (const entry of allCache) {
-      const similarity = calculateSimilarity(message, entry.question);
-      if (similarity > bestSimilarity && similarity >= threshold) {
-        bestSimilarity = similarity;
-        bestMatch = entry;
-      }
-    }
-    
-    if (bestMatch) {
-      console.log(`[CACHE] Encontrada con similitud: ${(bestSimilarity * 100).toFixed(1)}%`);
-      await cache.updateOne(
-        { _id: bestMatch._id },
-        { $inc: { useCount: 1 }, $set: { lastUsed: Date.now() } }
-      );
-      return bestMatch;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('[CACHE] Error:', error);
-    return null;
-  }
-}
+    const body = await request.json();
+    const { message, conversationId, image, document } = body;
 
-async function saveToCache(db, question, answer, sources, followups) {
-  try {
-    const cache = db.collection('cache');
-    await cache.insertOne({
-      question: normalizeText(question),
-      originalQuestion: question,
-      answer,
-      sources: sources || [],
-      followups: followups || [],
-      createdAt: Date.now(),
-      lastUsed: Date.now(),
-      useCount: 1
-    });
-    console.log('[CACHE] Respuesta guardada');
-  } catch (error) {
-    console.error('[CACHE] Error guardando:', error);
-  }
-}
-
-async function callOpenAI(messages, model, maxRetries = 2) {
-  console.log(`[CHAT] Usando modelo: ${model}`);
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    console.log(`[CHAT] Intento ${attempt + 1} de ${maxRetries + 1}`);
-    
-    const requestBody = {
-      model,
-      messages,
-      temperature: 0.7,
-      max_completion_tokens: 2048
-    };
-    
-    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    console.log('[CHAT] Status:', aiRes.status);
-
-    if (aiRes.ok) {
-      return await aiRes.json();
+    if (!message || typeof message !== 'string') {
+      return new Response(JSON.stringify({ error: 'Mensaje inválido' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
-    const errBody = await aiRes.json().catch(() => ({}));
-    const errMsg = errBody?.error?.message || "";
-
-    if ((aiRes.status === 429 || aiRes.status === 503) && attempt < maxRetries) {
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
-      continue;
-    }
-
-    throw new Error(errMsg || `OpenAI respondió ${aiRes.status}`);
-  }
-}
-
-function extractJson(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  let text = raw.trim();
-
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) text = fence[1].trim();
-
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-
-  let candidate = text.slice(start, end + 1);
-  candidate = candidate.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    return null;
-  }
-}
-
-function extractFieldsFallback(raw) {
-  if (!raw || typeof raw !== "string") return null;
-
-  const textMatch = raw.match(/"text"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"sources"|\s*,\s*"followups"|\s*})/);
-  const sourcesMatch = raw.match(/"sources"\s*:\s*(\[[\s\S]*?\])/);
-  const followupsMatch = raw.match(/"followups"\s*:\s*(\[[\s\S]*?\])/);
-
-  if (textMatch) {
-    let text = textMatch[1]
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
-
-    let sources = [];
-    if (sourcesMatch) {
-      try { sources = JSON.parse(sourcesMatch[1]); } catch { sources = []; }
-    }
-
-    let followups = [];
-    if (followupsMatch) {
-      try { followups = JSON.parse(followupsMatch[1]); } catch { followups = []; }
-    }
-
-    return { text, sources, followups };
-  }
-
-  return null;
-}
-
-export default async function handler(req, res) {
-  if (preflight(req, res)) return;
-  if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
-  
-  try {
-    console.log('[CHAT] Iniciando...');
+    // Determinar modelo basado en complejidad
+    const model = determineModel(message);
     
-    const user = await authUser(req);
-    if (!user) return send(res, 401, { error: "Sesión inválida." });
-
-    const { conversationId, message } = await readBody(req);
-    const text = String(message || "").trim();
-    
-    if (!text) {
-      return send(res, 400, { error: "Escribe un mensaje." });
-    }
-
-    console.log(`[CHAT] Mensaje: ${text.substring(0, 50)}...`);
-
-    const db = await getDb();
-    
-    console.log('[CHAT] Buscando en caché...');
-    const cached = await searchCache(db, text);
-    
-    let replyText, sources, followups;
+    // Verificar caché
+    const cacheKey = `chat:${model}:${message.toLowerCase().trim()}`;
+    const cached = await getCachedResponse(cacheKey);
     
     if (cached) {
-      console.log('[CHAT] Usando caché');
-      replyText = cached.answer;
-      sources = cached.sources;
-      followups = cached.followups;
-    } else {
-      console.log('[CHAT] Consultando IA...');
-      
-      const difficulty = classifyDifficulty(text);
-      const model = selectModel(difficulty);
-      console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
-
-      const col = db.collection("conversations");
-
-      let convo = null;
-      try {
-        convo = await col.findOne({ _id: new ObjectId(String(conversationId)), userId: user.userId });
-      } catch {
-        convo = null;
-      }
-      
-      if (!convo) return send(res, 404, { error: "Conversación no encontrada." });
-
-      const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
-
-      const openaiMessages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history,
-        { role: "user", content: text }
-      ];
-
-      let ai;
-      try {
-        console.log('[CHAT] Llamando a OpenAI...');
-        ai = await callOpenAI(openaiMessages, model);
-        console.log('[CHAT] Respuesta recibida');
-      } catch (e) {
-        console.error('[CHAT] Error:', e.message);
-        return send(res, 502, { 
-          error: `Error de IA: ${e.message}`, 
-          details: e.message,
-          model: model
-        });
-      }
-
-      const raw = ai.choices?.[0]?.message?.content || "";
-      console.log('[CHAT] Respuesta raw, longitud:', raw.length);
-      
-      const parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
-
-      replyText = String(parsed.text || raw || "No logré formular una respuesta.");
-      sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
-      followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
-      
-      console.log('[CHAT] Guardando en caché...');
-      await saveToCache(db, text, replyText, sources, followups);
-      
-      const now = Date.now();
-      const isFirstExchange = (convo.messages || []).length === 0;
-      
-      await col.updateOne(
-        { _id: convo._id },
-        {
-          $push: {
-            messages: {
-              $each: [
-                { role: "user", content: text, at: now },
-                { role: "assistant", content: replyText, sources, followUps: followups, at: now }
-              ]
-            }
-          },
-          $set: {
-            updatedAt: now,
-            ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {})
-          }
-        }
-      );
+      return new Response(JSON.stringify({
+        message: {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: cached,
+          timestamp: new Date().toISOString(),
+          model
+        },
+        conversationId: conversationId || generateId(),
+        model,
+        cached: true
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
     }
 
-    console.log('[CHAT] Respuesta enviada');
-    return send(res, 200, { text: replyText, sources, followups, fromCache: !!cached });
-  } catch (e) {
-    console.error('[CHAT] Error general:', e);
-    return send(res, 500, { error: "Error interno.", details: e.message });
+    // Llamar a OpenAI API
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: model === 'gpt-5-nano' ? 'gpt-4o-mini' : 'gpt-4o',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: message }
+        ],
+        max_tokens: 1024,
+        temperature: 0.7
+      })
+    });
+
+    if (!openaiResponse.ok) {
+      throw new Error(`OpenAI API error: ${openaiResponse.status}`);
+    }
+
+    const data = await openaiResponse.json();
+    const content = data.choices[0]?.message?.content || 'Lo siento, no pude generar una respuesta.';
+
+    // Guardar en caché
+    await cacheResponse(cacheKey, content);
+
+    // Guardar en MongoDB si hay conversationId
+    let finalConversationId = conversationId;
+    if (!conversationId) {
+      finalConversationId = generateId();
+      await createConversation(finalConversationId, message, content, model);
+    } else {
+      await addMessageToConversation(conversationId, message, content, model);
+    }
+
+    return new Response(JSON.stringify({
+      message: {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content,
+        timestamp: new Date().toISOString(),
+        model
+      },
+      conversationId: finalConversationId,
+      model,
+      cached: false
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+  } catch (error) {
+    console.error('Chat API error:', error);
+    return new Response(JSON.stringify({ error: 'Error interno del servidor' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
+}
+
+function determineModel(message) {
+  const simplePatterns = [
+    /^hola/i, /^hi/i, /^buenos/i, /^buenas/i,
+    /^gracias/i, /^thank/i, /^adios/i, /^bye/i,
+    /^que tal/i, /^como estas/i, /^cuantos/i, /^que es/i,
+    /^\d+\s*[+*/-]\s*\d+$/,
+    /^quien fue/i, /^quando/i, /^donde/i
+  ];
+
+  const isSimple = simplePatterns.some(pattern => pattern.test(message.trim()));
+  
+  if (isSimple || message.length < 50) {
+    return 'gpt-5-nano';
+  }
+  
+  return 'gpt-5-mini';
+}
+
+async function getCachedResponse(key) {
+  try {
+    const db = await getDb();
+    const cache = await db.collection('cache').findOne({ key });
+    
+    if (cache && new Date(cache.expiresAt) > new Date()) {
+      return cache.response;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Cache read error:', error);
+    return null;
+  }
+}
+
+async function cacheResponse(key, response) {
+  try {
+    const db = await getDb();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 días
+    
+    await db.collection('cache').updateOne(
+      { key },
+      {
+        $set: {
+          key,
+          response,
+          expiresAt,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error('Cache write error:', error);
+  }
+}
+
+async function createConversation(id, firstMessage, firstResponse, model) {
+  try {
+    const db = await getDb();
+    const title = firstMessage.slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
+    const now = new Date();
+    
+    await db.collection('conversations').insertOne({
+      _id: id,
+      title,
+      messages: [
+        {
+          id: generateId(),
+          role: 'user',
+          content: firstMessage,
+          timestamp: now
+        },
+        {
+          id: generateId(),
+          role: 'assistant',
+          content: firstResponse,
+          timestamp: now,
+          model
+        }
+      ],
+      createdAt: now,
+      updatedAt: now
+    });
+  } catch (error) {
+    console.error('Create conversation error:', error);
+  }
+}
+
+async function addMessageToConversation(conversationId, message, response, model) {
+  try {
+    const db = await getDb();
+    const now = new Date();
+    
+    await db.collection('conversations').updateOne(
+      { _id: conversationId },
+      {
+        $push: {
+          messages: {
+            $each: [
+              {
+                id: generateId(),
+                role: 'user',
+                content: message,
+                timestamp: now
+              },
+              {
+                id: generateId(),
+                role: 'assistant',
+                content: response,
+                timestamp: now,
+                model
+              }
+            ]
+          }
+        },
+        $set: { updatedAt: now }
+      }
+    );
+  } catch (error) {
+    console.error('Add message error:', error);
+  }
+}
+
+async function getDb() {
+  const { MongoClient } = await import('mongodb');
+  const client = new MongoClient(process.env.MONGODB_URI);
+  await client.connect();
+  return client.db('mimir-ia');
+}
+
+function generateId() {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
