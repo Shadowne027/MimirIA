@@ -152,7 +152,7 @@ async function callOpenAI(messages, model, maxRetries = 2) {
       model,
       messages,
       temperature: 0.7,
-      max_tokens: 2048,
+      max_completion_tokens: 2048,
     };
     
     console.log('[CHAT] Enviando request a OpenAI...');

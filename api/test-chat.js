@@ -76,7 +76,7 @@ export default async function handler(req, res) {
           messages: [
             { role: 'user', content: 'Di "OK" si funcionas' }
           ],
-          max_tokens: 10
+          max_completion_tokens: 10
         })
       });
 
