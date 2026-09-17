@@ -1,24 +1,17 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import { Toaster } from "sonner";
-import { AuthProvider } from "./contexts/AuthContext";
-import { ThemeProvider, ThemeToggleFab } from "./lib/theme";
-import LandingPage from "./pages/LandingPage";
-import ChatPage from "./pages/ChatPage";
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { LandingPage } from './pages/LandingPage';
+import { ChatPage } from './pages/ChatPage';
 
-export default function App() {
+function App() {
   return (
-    <ThemeProvider>
-      <BrowserRouter>
-        <AuthProvider>
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-          <ThemeToggleFab />
-          <Toaster position="top-center" richColors />
-        </AuthProvider>
-      </BrowserRouter>
-    </ThemeProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/chat" element={<ChatPage />} />
+        <Route path="/chat/:id" element={<ChatPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
+
+export default App;
