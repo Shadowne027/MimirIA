@@ -1,303 +1,130 @@
-import { ObjectId } from "mongodb";
-import { getDb, authUser, send, SYSTEM_PROMPT, preflight, readBody } from "./_lib.js";
+// api/chat.js
+import OpenAI from 'openai';
+import { MongoClient } from 'mongodb';
+
+// Configuración de OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Configuración de MongoDB (Opcional, para historial/caché si lo usabas)
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri);
 
 /**
- * POST /api/chat
- * Sistema inteligente con caché y enrutamiento de modelos
+ * Determina el modelo a usar basado en la complejidad del prompt.
+ * - gpt-5-nano: Consultas rápidas, saludos, hechos simples.
+ * - gpt-5-mini: Razonamiento, código, análisis, preguntas complejas.
  */
+function determineModel(prompt) {
+  const simpleKeywords = ['hola', 'hi', 'buenos', 'gracias', 'adios', 'qué hora', 'fecha', 'clima'];
+  const isSimple = simpleKeywords.some(keyword => prompt.toLowerCase().includes(keyword));
 
-function classifyDifficulty(message) {
-  const msg = message.toLowerCase();
-  const len = message.length;
-  
-  if (/código|program|función|algoritmo|ecuaci|derivad|integral|cálculo|físic|quím|analiz|compar|ensay|tesis/i.test(msg) || len > 200) {
-    return 'complex';
-  }
-  
-  if (/^(hola|hey|buenos|buenas|gracias|ok|vale)/i.test(msg) || /^(qué es|quién es|cuándo|dónde)/i.test(msg) && len < 50) {
-    return 'simple';
-  }
-  
-  return 'medium';
-}
+  // Si es muy corto y parece saludo -> Nano
+  if (prompt.length < 15 && isSimple) return 'gpt-5-nano';
 
-function selectModel(difficulty) {
-  return difficulty === 'simple' ? 'gpt-5-nano' : 'gpt-5-mini';
-}
+  // Si contiene palabras clave de complejidad -> Mini
+  const complexKeywords = ['analiza', 'código', 'programa', 'explica detalladamente', 'compara', 'resume', 'traduce', 'crea'];
+  if (complexKeywords.some(k => prompt.toLowerCase().includes(k))) return 'gpt-5-mini';
 
-function normalizeText(text) {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function calculateSimilarity(text1, text2) {
-  const words1 = new Set(normalizeText(text1).split(' '));
-  const words2 = new Set(normalizeText(text2).split(' '));
-  const intersection = new Set([...words1].filter(x => words2.has(x)));
-  const union = new Set([...words1, ...words2]);
-  return intersection.size / union.size;
-}
-
-async function searchCache(db, message) {
-  try {
-    const cache = db.collection('cache');
-    const allCache = await cache.find({}).toArray();
-    
-    if (allCache.length === 0) return null;
-    
-    let bestMatch = null;
-    let bestSimilarity = 0;
-    const threshold = 0.6;
-    
-    for (const entry of allCache) {
-      const similarity = calculateSimilarity(message, entry.question);
-      if (similarity > bestSimilarity && similarity >= threshold) {
-        bestSimilarity = similarity;
-        bestMatch = entry;
-      }
-    }
-    
-    if (bestMatch) {
-      console.log(`[CACHE] Encontrada con similitud: ${(bestSimilarity * 100).toFixed(1)}%`);
-      await cache.updateOne(
-        { _id: bestMatch._id },
-        { $inc: { useCount: 1 }, $set: { lastUsed: Date.now() } }
-      );
-      return bestMatch;
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('[CACHE] Error:', error);
-    return null;
-  }
-}
-
-async function saveToCache(db, question, answer, sources, followups) {
-  try {
-    const cache = db.collection('cache');
-    await cache.insertOne({
-      question: normalizeText(question),
-      originalQuestion: question,
-      answer,
-      sources: sources || [],
-      followups: followups || [],
-      createdAt: Date.now(),
-      lastUsed: Date.now(),
-      useCount: 1
-    });
-    console.log('[CACHE] Respuesta guardada');
-  } catch (error) {
-    console.error('[CACHE] Error guardando:', error);
-  }
-}
-
-async function callOpenAI(messages, model, maxRetries = 2) {
-  console.log(`[CHAT] Usando modelo: ${model}`);
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    console.log(`[CHAT] Intento ${attempt + 1} de ${maxRetries + 1}`);
-    
-    const requestBody = {
-      model,
-      messages,
-      temperature: 0.7,
-      max_completion_tokens: 2048
-    };
-    
-    const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
-      },
-      body: JSON.stringify(requestBody)
-    });
-
-    console.log('[CHAT] Status:', aiRes.status);
-
-    if (aiRes.ok) {
-      return await aiRes.json();
-    }
-
-    const errBody = await aiRes.json().catch(() => ({}));
-    const errMsg = errBody?.error?.message || "";
-
-    if ((aiRes.status === 429 || aiRes.status === 503) && attempt < maxRetries) {
-      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
-      continue;
-    }
-
-    throw new Error(errMsg || `OpenAI respondió ${aiRes.status}`);
-  }
-}
-
-function extractJson(raw) {
-  if (!raw || typeof raw !== "string") return null;
-  let text = raw.trim();
-
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence) text = fence[1].trim();
-
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
-
-  let candidate = text.slice(start, end + 1);
-  candidate = candidate.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    return null;
-  }
-}
-
-function extractFieldsFallback(raw) {
-  if (!raw || typeof raw !== "string") return null;
-
-  const textMatch = raw.match(/"text"\s*:\s*"([\s\S]*?)"(?=\s*,\s*"sources"|\s*,\s*"followups"|\s*})/);
-  const sourcesMatch = raw.match(/"sources"\s*:\s*(\[[\s\S]*?\])/);
-  const followupsMatch = raw.match(/"followups"\s*:\s*(\[[\s\S]*?\])/);
-
-  if (textMatch) {
-    let text = textMatch[1]
-      .replace(/\\n/g, "\n")
-      .replace(/\\r/g, "\r")
-      .replace(/\\t/g, "\t")
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, "\\");
-
-    let sources = [];
-    if (sourcesMatch) {
-      try { sources = JSON.parse(sourcesMatch[1]); } catch { sources = []; }
-    }
-
-    let followups = [];
-    if (followupsMatch) {
-      try { followups = JSON.parse(followupsMatch[1]); } catch { followups = []; }
-    }
-
-    return { text, sources, followups };
-  }
-
-  return null;
+  // Por defecto, usamos mini para asegurar calidad, o nano si quieres ahorrar costos en dudas generales
+  // Aquí dejo 'gpt-5-mini' como default para seguridad, puedes cambiarlo a 'gpt-5-nano' si prefieres velocidad
+  return 'gpt-5-mini';
 }
 
 export default async function handler(req, res) {
-  if (preflight(req, res)) return;
-  if (req.method !== "POST") return send(res, 405, { error: "Método no permitido" });
-  
-  try {
-    console.log('[CHAT] Iniciando...');
-    
-    const user = await authUser(req);
-    if (!user) return send(res, 401, { error: "Sesión inválida." });
+  // Solo permitir POST
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-    const { conversationId, message } = await readBody(req);
-    const text = String(message || "").trim();
-    
-    if (!text) {
-      return send(res, 400, { error: "Escribe un mensaje." });
+  try {
+    const { message, conversationHistory = [], userId } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
     }
 
-    console.log(`[CHAT] Mensaje: ${text.substring(0, 50)}...`);
+    // 1. Determinar el modelo inteligente
+    const modelToUse = determineModel(message);
 
-    const db = await getDb();
-    
-    console.log('[CHAT] Buscando en caché...');
-    const cached = await searchCache(db, text);
-    
-    let replyText, sources, followups;
-    
-    if (cached) {
-      console.log('[CHAT] Usando caché');
-      replyText = cached.answer;
-      sources = cached.sources;
-      followups = cached.followups;
-    } else {
-      console.log('[CHAT] Consultando IA...');
-      
-      const difficulty = classifyDifficulty(text);
-      const model = selectModel(difficulty);
-      console.log(`[CHAT] Dificultad: ${difficulty}, Modelo: ${model}`);
+    console.log(`[MIMIR IA] Usando modelo: ${modelToUse} para el mensaje: "${message.substring(0, 30)}..."`);
 
-      const col = db.collection("conversations");
+    // 2. Construir mensajes para la API
+    // System prompt para dar personalidad a MIMIR
+    const systemPrompt = {
+      role: 'system',
+      content: "Eres MIMIR, una IA avanzada, útil y precisa. Respondes de manera concisa pero completa. Si te preguntan algo complejo, razona paso a paso. Si es un saludo, sé amigable."
+    };
 
-      let convo = null;
+    const messages = [
+      systemPrompt,
+      ...conversationHistory, // Historial previo si existe
+      { role: 'user', content: message }
+    ];
+
+    // 3. Llamar a OpenAI con el modelo seleccionado
+    const completion = await openai.chat.completions.create({
+      model: modelToUse, // Aquí se inyecta 'gpt-5-nano' o 'gpt-5-mini'
+      messages: messages,
+      temperature: 0.7,
+      max_tokens: 1024,
+    });
+
+    const reply = completion.choices[0].message.content;
+
+    // 4. (Opcional) Guardar en MongoDB si está configurado
+    if (uri && userId) {
       try {
-        convo = await col.findOne({ _id: new ObjectId(String(conversationId)), userId: user.userId });
-      } catch {
-        convo = null;
-      }
-      
-      if (!convo) return send(res, 404, { error: "Conversación no encontrada." });
+        await client.connect();
+        const db = client.db('mimir_db');
+        const collection = db.collection('conversations');
 
-      const history = (convo.messages || []).slice(-16).map((m) => ({ role: m.role, content: m.content }));
-
-      const openaiMessages = [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...history,
-        { role: "user", content: text }
-      ];
-
-      let ai;
-      try {
-        console.log('[CHAT] Llamando a OpenAI...');
-        ai = await callOpenAI(openaiMessages, model);
-        console.log('[CHAT] Respuesta recibida');
-      } catch (e) {
-        console.error('[CHAT] Error:', e.message);
-        return send(res, 502, { 
-          error: `Error de IA: ${e.message}`, 
-          details: e.message,
-          model: model
-        });
-      }
-
-      const raw = ai.choices?.[0]?.message?.content || "";
-      console.log('[CHAT] Respuesta raw, longitud:', raw.length);
-      
-      const parsed = extractJson(raw) || extractFieldsFallback(raw) || {};
-
-      replyText = String(parsed.text || raw || "No logré formular una respuesta.");
-      sources = Array.isArray(parsed.sources) ? parsed.sources.slice(0, 5) : [];
-      followups = Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [];
-      
-      console.log('[CHAT] Guardando en caché...');
-      await saveToCache(db, text, replyText, sources, followups);
-      
-      const now = Date.now();
-      const isFirstExchange = (convo.messages || []).length === 0;
-      
-      await col.updateOne(
-        { _id: convo._id },
-        {
-          $push: {
-            messages: {
-              $each: [
-                { role: "user", content: text, at: now },
-                { role: "assistant", content: replyText, sources, followUps: followups, at: now }
-              ]
+        await collection.updateOne(
+          { userId: userId },
+          {
+            $push: {
+              messages: {
+                user: {
+                  role: 'user',
+                  content: message,
+                  timestamp: new Date(),
+                  model: 'user'
+                },
+                response: {
+                  role: 'assistant',
+                  content: reply,
+                  timestamp: new Date(),
+                  model: modelToUse
+                }
+              }
             }
           },
-          $set: {
-            updatedAt: now,
-            ...(isFirstExchange ? { title: text.slice(0, 48) + (text.length > 48 ? "…" : "") } : {})
-          }
-        }
-      );
+          { upsert: true }
+        );
+      } catch (dbError) {
+        console.error('Error guardando en DB:', dbError);
+        // No fallamos la petición si la DB falla, solo logueamos
+      } finally {
+        await client.close();
+      }
     }
 
-    console.log('[CHAT] Respuesta enviada');
-    return send(res, 200, { text: replyText, sources, followups, fromCache: !!cached });
-  } catch (e) {
-    console.error('[CHAT] Error general:', e);
-    return send(res, 500, { error: "Error interno.", details: e.message });
+    // 5. Responder al frontend
+    return res.status(200).json({
+      success: true,
+      data: {
+        response: reply,
+        model: modelToUse, // Devolvemos qué modelo se usó (útil para debug)
+        usage: completion.usage
+      }
+    });
+
+  } catch (error) {
+    console.error('Error en API Chat:', error);
+    return res.status(500).json({
+      error: 'Failed to process chat',
+      details: error.message
+    });
   }
 }
