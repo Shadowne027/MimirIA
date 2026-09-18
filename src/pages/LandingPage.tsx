@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../lib/useTheme';
 
-export function LandingPage() {
+export default function LandingPage() {
   const navigate = useNavigate();
   const { isDark, toggle } = useTheme();
   const [isScrolled, setIsScrolled] = useState(false);
